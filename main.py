@@ -13,7 +13,7 @@ keep_alive()
 
 # --------- KONFIGURACJA ---------
 MUTE_ROLE_ID = 1383499861319618700  # ID roli "Wyciszony"
-LOG_CHANNEL_ID = 1383489317766168576  # ID kanału logów
+LOG_CHANNEL_ID = 1383785833680732231  # ID kanału logów
 
 UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # Podmień na swój URL
 MUTE_LOG_FILE = "mute_logi_role.txt"  # Plik do zapisywania backupu ról
