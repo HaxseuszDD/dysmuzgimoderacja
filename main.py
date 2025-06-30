@@ -12,7 +12,7 @@ from keep_alive import keep_alive
 keep_alive()
 
 # --------- KONFIGURACJA ---------
-GUILD_ID = 1386878418716721202  # <-- Podmień na ID swojego serwera
+GUILD_ID = 1386878418716721202  # Podmień na ID swojego serwera
 guild = discord.Object(id=GUILD_ID)
 
 MUTE_ROLE_ID = 1389325433161646241  # ID roli "Wyciszony"
@@ -41,31 +41,33 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-def load_mute_log():
-    if not os.path.isfile(MUTE_LOG_FILE):
+
+# --- Pomocnicze funkcje do logów i uprawnień ---
+
+def load_json_file(path):
+    if not os.path.isfile(path):
         return {}
-    with open(MUTE_LOG_FILE, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         try:
             return json.load(f)
         except json.JSONDecodeError:
             return {}
+
+def save_json_file(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def load_mute_log():
+    return load_json_file(MUTE_LOG_FILE)
 
 def save_mute_log(data):
-    with open(MUTE_LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    save_json_file(MUTE_LOG_FILE, data)
 
 def load_warn_log():
-    if not os.path.isfile(WARN_LOG_FILE):
-        return {}
-    with open(WARN_LOG_FILE, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
+    return load_json_file(WARN_LOG_FILE)
 
 def save_warn_log(data):
-    with open(WARN_LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    save_json_file(WARN_LOG_FILE, data)
 
 def has_permission(member: discord.Member, command_name: str) -> bool:
     allowed_roles = PERMISSIONS.get(command_name, [])
@@ -75,7 +77,7 @@ def has_permission(member: discord.Member, command_name: str) -> bool:
 
 async def send_log_embed(title: str, user: discord.Member, moderator: discord.Member, reason: str, extra: dict = None):
     channel = bot.get_channel(LOG_CHANNEL_ID)
-    if channel is None:
+    if not channel:
         print("Nie znaleziono kanału logów!")
         return
 
@@ -84,8 +86,16 @@ async def send_log_embed(title: str, user: discord.Member, moderator: discord.Me
         for key, value in extra.items():
             description += f"\n{key}: {value}"
 
-    embed = discord.Embed(title=title, description=description, color=discord.Color.orange(), timestamp=datetime.utcnow())
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
     await channel.send(embed=embed)
+
+
+# --- Komendy ---
 
 @tree.command(guild=guild, name="mute", description="Wycisz użytkownika")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", czas="Czas wyciszenia w minutach")
@@ -121,7 +131,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     koniec_timestamp = int(koniec.timestamp())
 
     await send_log_embed(
-        title="`🔇` Mute",
+        title="🔇 Mute",
         user=user,
         moderator=interaction.user,
         reason=reason,
@@ -159,6 +169,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     bot.loop.create_task(unmute_task())
 
+
 @tree.command(guild=guild, name="unmute", description="Odcisz użytkownika")
 @app_commands.describe(user="Użytkownik do odciszenia", reason="Powód odciszenia")
 async def unmute(interaction: discord.Interaction, user: discord.Member, reason: str):
@@ -194,12 +205,13 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
         return
 
     await send_log_embed(
-        title="`🔈` Unmute",
+        title="🔈 Unmute",
         user=user,
         moderator=interaction.user,
         reason=reason
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został odciszony.", ephemeral=True)
+
 
 @tree.command(guild=guild, name="warn", description="Ostrzeż użytkownika")
 @app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
@@ -210,7 +222,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await interaction.response.defer(ephemeral=True)
     await send_log_embed(
-        title="`⚠️` Warn",
+        title="⚠️ Warn",
         user=user,
         moderator=interaction.user,
         reason=reason
@@ -231,6 +243,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await interaction.followup.send(f"✅ Użytkownik {user} został ostrzeżony z powodu: {reason}", ephemeral=True)
 
+
 @tree.command(guild=guild, name="ban", description="Zbanuj użytkownika")
 @app_commands.describe(user="Użytkownik do zbanowania", reason="Powód bana")
 async def ban(interaction: discord.Interaction, user: discord.Member, reason: str):
@@ -246,12 +259,13 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
         return
 
     await send_log_embed(
-        title="`⛔` Ban",
+        title="⛔ Ban",
         user=user,
         moderator=interaction.user,
         reason=reason
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został zbanowany.", ephemeral=True)
+
 
 @tree.command(guild=guild, name="kary", description="Sprawdź ile ostrzeżeń i wyciszeń ma użytkownik")
 @app_commands.describe(user="Użytkownik do sprawdzenia")
@@ -276,10 +290,14 @@ async def kary(interaction: discord.Interaction, user: discord.Member):
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+
+# --- Eventy i taski ---
+
 @bot.event
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
     try:
+        # Synchronizacja tylko dla jednego guilda, by uniknąć duplikatów
         await tree.sync(guild=guild)
         print("Slash commands zsynchronizowane na guild!")
     except Exception as e:
@@ -291,8 +309,10 @@ async def on_ready():
 
 async def update_presence():
     for guild_obj in bot.guilds:
-        member_count = guild_obj.member_count
-        activity = discord.Activity(type=discord.ActivityType.watching, name=f"Imperium kebabow {member_count} osób")
+        # Fetch wszystkich członków, aby mieć dokładną liczbę
+        members = await guild_obj.fetch_members().flatten()
+        member_count = len(members)
+        activity = discord.Activity(type=discord.ActivityType.watching, name=f"GOATY {member_count} osób")
         await bot.change_presence(activity=activity)
         break
 
