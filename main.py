@@ -12,12 +12,13 @@ from keep_alive import keep_alive
 keep_alive()
 
 # --------- KONFIGURACJA ---------
+GUILD_ID = 1386878418716721202  # ID serwera do którego ograniczamy slash commands i logikę
 MUTE_ROLE_ID = 1389325433161646241  # ID roli "Wyciszony"
 LOG_CHANNEL_ID = 1388833060933337129  # ID kanału logów
 
 UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # Podmień na swój URL
 MUTE_LOG_FILE = "mute_logi_role.txt"  # Plik do zapisywania backupu ról
-WARN_LOG_FILE = "warn_logi.json"      # <-- DODANE: plik do logów ostrzeżeń
+WARN_LOG_FILE = "warn_logi.json"      # Plik do logów ostrzeżeń
 
 # Mapowanie komend na listę ID ról, które mogą ich używać
 PERMISSIONS = {
@@ -27,7 +28,6 @@ PERMISSIONS = {
     "warn": [1386884859502399520, 1386884865265369119, 1386884871062028480, 1386884876233474089, 1386884881363243140, 1386884886341750886],
 }
 
-# Pobieramy token z secret environment variable
 def get_token():
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
@@ -52,7 +52,6 @@ def save_mute_log(data):
     with open(MUTE_LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- DODANE FUNKCJE do warn logu ---
 def load_warn_log():
     if not os.path.isfile(WARN_LOG_FILE):
         return {}
@@ -86,14 +85,18 @@ async def send_log_embed(title: str, user: discord.Member, moderator: discord.Me
     embed = discord.Embed(title=title, description=description, color=discord.Color.orange(), timestamp=datetime.utcnow())
     await channel.send(embed=embed)
 
+# ------------------- KOMENDY -------------------
+
 @tree.command(name="mute", description="Wycisz użytkownika")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", czas="Czas wyciszenia w minutach")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def mute(interaction: discord.Interaction, user: discord.Member, reason: str, czas: int):
     if not has_permission(interaction.user, "mute"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=True)
+
     role = interaction.guild.get_role(MUTE_ROLE_ID)
     if not role:
         await interaction.followup.send("Nie znaleziono roli wyciszonego.", ephemeral=True)
@@ -153,13 +156,15 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
                     moderator=bot.user,
                     reason="Koniec czasu wyciszenia"
                 )
+                print(f"[INFO] Automatyczne odciszenie {user} zakończone.")
             except Exception as e:
-                print(f"Błąd przy zdejmowaniu roli wyciszenia/przywracaniu ról: {e}")
+                print(f"[ERROR] Błąd przy automatycznym unmute: {e}")
 
     bot.loop.create_task(unmute_task())
 
 @tree.command(name="unmute", description="Odcisz użytkownika")
 @app_commands.describe(user="Użytkownik do odciszenia", reason="Powód odciszenia")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def unmute(interaction: discord.Interaction, user: discord.Member, reason: str):
     if not has_permission(interaction.user, "unmute"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
@@ -200,9 +205,9 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został odciszony.", ephemeral=True)
 
-# --- EDYCJA komendy warn - DODANE LOGOWANIE ---
 @tree.command(name="warn", description="Ostrzeż użytkownika")
 @app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
     if not has_permission(interaction.user, "warn"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
@@ -216,7 +221,6 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         reason=reason
     )
 
-    # --- LOGOWANIE WARN ---
     warn_log = load_warn_log()
     uid = str(user.id)
     if uid not in warn_log:
@@ -234,6 +238,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
 @tree.command(name="ban", description="Zbanuj użytkownika")
 @app_commands.describe(user="Użytkownik do zbanowania", reason="Powód bana")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def ban(interaction: discord.Interaction, user: discord.Member, reason: str):
     if not has_permission(interaction.user, "ban"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
@@ -254,9 +259,9 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został zbanowany.", ephemeral=True)
 
-# --- NOWA KOMENDA: /kary ---
 @tree.command(name="kary", description="Sprawdź ile ostrzeżeń i wyciszeń ma użytkownik")
 @app_commands.describe(user="Użytkownik do sprawdzenia")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def kary(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer(ephemeral=True)
 
@@ -278,11 +283,14 @@ async def kary(interaction: discord.Interaction, user: discord.Member):
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+# ------------------- EVENTY -------------------
+
 @bot.event
 async def on_ready():
     print(f"Zalogowano jako {bot.user}")
     try:
-        await tree.sync()
+        guild = discord.Object(id=GUILD_ID)
+        await tree.sync(guild=guild)
         print("Slash commands zsynchronizowane!")
     except Exception as e:
         print(f"Błąd synchronizacji slash commands: {e}")
@@ -293,29 +301,30 @@ async def on_ready():
 
 async def update_presence():
     for guild in bot.guilds:
-        member_count = guild.member_count
-        activity = discord.Activity(type=discord.ActivityType.watching, name=f"GOATY {member_count} osób")
-        await bot.change_presence(activity=activity)
-        break
+        if guild.id == GUILD_ID:
+            try:
+                if not guild.chunked:
+                    await guild.chunk()
+                member_count = guild.member_count
+            except Exception as e:
+                print(f"Błąd podczas pobierania liczby członków: {e}")
+                member_count = guild.member_count
 
-@tasks.loop(minutes=10)
+            activity = discord.Activity(type=discord.ActivityType.watching, name=f"GOATY {member_count} osób")
+            await bot.change_presence(activity=activity)
+            break
+
+@tasks.loop(minutes=5)
 async def update_presence_loop():
     await update_presence()
 
-@tasks.loop(minutes=5)
+@tasks.loop(seconds=60)
 async def ping_uptimerobot():
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(UPTIME_ROBOT_URL) as resp:
-                if resp.status == 200:
-                    print("UptimeRobot: Ping OK")
-                else:
-                    print(f"UptimeRobot: Błąd pingowania, status {resp.status}")
+                print(f"[UptimeRobot] Ping status: {resp.status}")
         except Exception as e:
-            print(f"UptimeRobot: Wyjątek pingowania: {e}")
-
-@ping_uptimerobot.before_loop
-async def before_ping():
-    await bot.wait_until_ready()
+            print(f"[UptimeRobot] Błąd pingu: {e}")
 
 bot.run(get_token())
