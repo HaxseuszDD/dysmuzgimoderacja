@@ -82,14 +82,25 @@ async def update_presence():
 async def restore_mutes():
     """Po restarcie bota odczytaj mute_time_log i przywróć muty, uruchom zadania do unmutowania"""
     mute_time_log = load_json(MUTE_TIME_LOG_FILE)
-    guild = bot.guilds[0]  # Załóżmy, że bot jest na jednym serwerze
-    role = guild.get_role(MUTE_ROLE_ID)
 
     for user_id_str, end_timestamp in mute_time_log.items():
         user_id = int(user_id_str)
-        member = guild.get_member(user_id)
-        if not member:
+        member = None
+        guild = None
+        # Znajdź użytkownika i jego serwer
+        for g in bot.guilds:
+            m = g.get_member(user_id)
+            if m:
+                member = m
+                guild = g
+                break
+        if not member or not guild:
             continue
+
+        role = guild.get_role(MUTE_ROLE_ID)
+        if not role:
+            continue
+
         now_ts = int(datetime.utcnow().timestamp())
         seconds_left = end_timestamp - now_ts
         if seconds_left > 0:
