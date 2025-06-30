@@ -288,18 +288,5 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
     except Exception as e:
         await interaction.followup.send(f"Błąd przy zdejmowaniu roli muta: {e}", ephemeral=True)
 
-@tree.command(name="sprawdz", description="Sprawdź ilość mute/warn/ban użytkownika")
-@app_commands.describe(user="Użytkownik do sprawdzenia")
-async def checkpunishments(interaction: discord.Interaction, user: discord.Member):
-    punishment_log = load_json(PUNISHMENT_LOG_FILE)
-    user_data = punishment_log.get(str(user.id), {"mutes": 0, "warns": 0, "bans": 0})
-
-    embed = discord.Embed(title=f"Statystyki kar użytkownika {user}", color=discord.Color.blue())
-    embed.add_field(name="Mute'y", value=str(user_data.get("mutes", 0)), inline=True)
-    embed.add_field(name="Warny", value=str(user_data.get("warns", 0)), inline=True)
-    embed.add_field(name="Bany", value=str(user_data.get("bans", 0)), inline=True)
-    embed.set_footer(text=f"ID użytkownika: {user.id}")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 # --- URUCHOMIENIE BOTA ---
 bot.run(get_token())
