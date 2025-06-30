@@ -1,26 +1,19 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
 import asyncio
-import aiohttp
 import json
 import os
 
-from keep_alive import keep_alive
-
-keep_alive()
-
 # --------- KONFIGURACJA ---------
-GUILD_ID = 1386878418716721202  # ID serwera do którego ograniczamy slash commands i logikę
-MUTE_ROLE_ID = 1389325433161646241  # ID roli "Wyciszony"
-LOG_CHANNEL_ID = 1388833060933337129  # ID kanału logów
+GUILD_ID = 1386878418716721202  # ID serwera
+MUTE_ROLE_ID = 1389325433161646241  # Rola wyciszonego
+LOG_CHANNEL_ID = 1388833060933337129  # Kanał logów
 
-UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # Podmień na swój URL
-MUTE_LOG_FILE = "mute_logi_role.json"  # Plik do zapisywania backupu ról (zmieniłem na .json)
-WARN_LOG_FILE = "warn_logi.json"      # Plik do logów ostrzeżeń
+MUTE_LOG_FILE = "mute_logi_role.json"
+WARN_LOG_FILE = "warn_logi.json"
 
-# Mapowanie komend na listę ID ról, które mogą ich używać
 PERMISSIONS = {
     "mute": [1388937014379810916, 1388937017185800375, 1388938738574557305, 1388939460372070510, 1386884881363243140, 1386884886341750886],
     "unmute": [1388937014379810916, 1388937017185800375, 1388938738574557305, 1388939460372070510, 1386884881363243140],
@@ -36,6 +29,7 @@ def get_token():
 
 intents = discord.Intents.default()
 intents.members = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
@@ -66,8 +60,6 @@ def save_warn_log(data):
 
 def has_permission(member: discord.Member, command_name: str) -> bool:
     allowed_roles = PERMISSIONS.get(command_name, [])
-    if not allowed_roles:
-        return False
     return any(role.id in allowed_roles for role in member.roles)
 
 async def send_log_embed(title: str, user: discord.Member, moderator: discord.Member, reason: str, extra: dict = None):
@@ -76,7 +68,7 @@ async def send_log_embed(title: str, user: discord.Member, moderator: discord.Me
         print("Nie znaleziono kanału logów!")
         return
 
-    description = f"Użytkownik: {user} ({user.id})\nModerator: {moderator.display_name} ({moderator.id})\nPowód: {reason}"
+    description = f"Użytkownik: {user} ({user.id})\nModerator: {moderator.display_name if moderator else 'Bot'} ({moderator.id if moderator else '---'})\nPowód: {reason}"
     if extra:
         for key, value in extra.items():
             description += f"\n{key}: {value}"
@@ -84,7 +76,7 @@ async def send_log_embed(title: str, user: discord.Member, moderator: discord.Me
     embed = discord.Embed(title=title, description=description, color=discord.Color.orange(), timestamp=datetime.utcnow())
     await channel.send(embed=embed)
 
-# ------------------- KOMENDY -------------------
+# ----------- KOMENDY -------------
 
 @tree.command(name="mute", description="Wycisz użytkownika")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", czas="Czas wyciszenia w minutach")
@@ -105,7 +97,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.followup.send("Ten użytkownik jest już wyciszony.", ephemeral=True)
         return
 
-    # Backup wszystkich ról (oprócz roli @everyone i roli mute)
+    # Backup ról oprócz @everyone i mute
     roles_to_remove = [r for r in user.roles if r.id != interaction.guild.id and r.id != MUTE_ROLE_ID]
 
     mute_log = load_mute_log()
@@ -113,8 +105,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     save_mute_log(mute_log)
 
     try:
-        # Usuń role i daj mute
-        await user.remove_roles(*roles_to_remove, reason="Backup i usunięcie przed mute")
+        await user.remove_roles(*roles_to_remove, reason="Backup ról przed mute")
         await user.add_roles(role, reason=reason)
     except Exception as e:
         await interaction.followup.send(f"Błąd przy nadawaniu/odbieraniu roli: {e}", ephemeral=True)
@@ -137,15 +128,15 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     async def unmute_task():
         await asyncio.sleep(czas * 60)
-        # Pobierz aktualnego użytkownika na serwerze (na wypadek zmiany obiektu)
-        try:
-            guild = bot.get_guild(GUILD_ID)
-            member = guild.get_member(user.id)
-            if not member:
-                print(f"[WARN] Użytkownik {user} nie jest już na serwerze.")
-                return
-
-            if role in member.roles:
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            return
+        member = guild.get_member(user.id)
+        if not member:
+            print(f"[WARN] Użytkownik {user} nie jest już na serwerze.")
+            return
+        if role in member.roles:
+            try:
                 await member.remove_roles(role, reason="Koniec wyciszenia")
 
                 mute_log = load_mute_log()
@@ -161,12 +152,12 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
                 await send_log_embed(
                     title="🔈 Unmute (automatyczny)",
                     user=member,
-                    moderator=bot.user,
+                    moderator=None,
                     reason="Koniec czasu wyciszenia"
                 )
                 print(f"[INFO] Automatyczne odciszenie {member} zakończone.")
-        except Exception as e:
-            print(f"[ERROR] Błąd przy automatycznym unmute: {e}")
+            except Exception as e:
+                print(f"[ERROR] Błąd przy automatycznym unmute: {e}")
 
     bot.loop.create_task(unmute_task())
 
@@ -179,6 +170,7 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
         return
 
     await interaction.response.defer(ephemeral=True)
+
     role = interaction.guild.get_role(MUTE_ROLE_ID)
     if not role:
         await interaction.followup.send("Nie znaleziono roli wyciszonego.", ephemeral=True)
@@ -304,8 +296,7 @@ async def liczba(interaction: discord.Interaction):
         await interaction.followup.send("Nie znaleziono serwera!", ephemeral=True)
         return
 
-    # Pobieranie członków - musi być enabled intent 'members' w konfiguracji bota i zaproszenie z odpowiednimi uprawnieniami
-    await guild.chunk()
+    await guild.chunk()  # Załaduj wszystkich członków
 
     member_count = len(guild.members)
 
@@ -316,7 +307,5 @@ async def on_ready():
     print(f"Zalogowano jako {bot.user} (ID: {bot.user.id})")
     await tree.sync(guild=discord.Object(id=GUILD_ID))
     print(f"Slash commands zsynchronizowane dla guild {GUILD_ID}")
-
-# ---------------------------------------
 
 bot.run(get_token())
