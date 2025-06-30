@@ -1,26 +1,22 @@
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-from datetime import datetime, timedelta
+import os
+import json
 import asyncio
 import aiohttp
-import json
-import os
+from datetime import datetime, timedelta
 
-from keep_alive import keep_alive
+import discord
+from discord.ext import tasks, commands
+from discord import app_commands
 
-keep_alive()
+import keep_alive  # import pliku keep_alive (kod nie jest podawany)
 
-# --------- KONFIGURACJA ---------
-GUILD_ID = 1386878418716721202  # Podmień na ID swojego serwera
-guild = discord.Object(id=GUILD_ID)
 
-MUTE_ROLE_ID = 1389325433161646241  # ID roli "Wyciszony"
+# --- KONFIGURACJA ---
+
+MUTE_ROLE_ID = 1389325433161646241  # ID roli Muted
 LOG_CHANNEL_ID = 1388833060933337129  # ID kanału logów
-
-UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # Podmień na swój URL
-MUTE_LOG_FILE = "mute_logi_role.json"  # Plik do zapisywania backupu ról (zmiana rozszerzenia)
-WARN_LOG_FILE = "warn_logi.json"      # Plik do logów ostrzeżeń
+UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # przykładowy URL (podmień na swój)
+MUTE_LOG_FILE = "mute_logi_role.txt"  # plik do backupu ról wyciszonych
 
 PERMISSIONS = {
     "mute": [1388937014379810916, 1388937017185800375, 1388938738574557305, 1388939460372070510, 1386884881363243140, 1386884886341750886],
@@ -29,309 +25,239 @@ PERMISSIONS = {
     "warn": [1386884859502399520, 1386884865265369119, 1386884871062028480, 1386884876233474089, 1386884881363243140, 1386884886341750886],
 }
 
-def get_token() -> str:
-    token = os.environ.get("DISCORD_TOKEN")
-    if not token:
-        raise RuntimeError("Brak zmiennej środowiskowej DISCORD_TOKEN!")
-    return token
+
+# --- FUNKCJE POMOCNICZE ---
+
+def has_permission(member: discord.Member, command_name: str) -> bool:
+    """Sprawdza, czy użytkownik ma wymaganą rolę do danej komendy."""
+    required_roles = PERMISSIONS.get(command_name, [])
+    return any(role.id in required_roles for role in member.roles)
+
+
+def load_mute_log() -> dict:
+    """Wczytuje z pliku JSON backup ról wyciszonych użytkowników."""
+    try:
+        with open(MUTE_LOG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_mute_log(data: dict):
+    """Zapisuje do pliku JSON backup ról wyciszonych użytkowników."""
+    with open(MUTE_LOG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+
+async def send_log_embed(bot: commands.Bot, title: str, description: str, color: discord.Color = discord.Color.blue()):
+    """Wysyła embed do kanału logów."""
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel:
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        await channel.send(embed=embed)
+
+
+# --- BOT I KOMENDY ---
 
 intents = discord.Intents.default()
 intents.members = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
 
-def load_json_file(path: str) -> dict:
-    if not os.path.isfile(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-
-def save_json_file(path: str, data: dict) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-def load_mute_log() -> dict:
-    return load_json_file(MUTE_LOG_FILE)
-
-def save_mute_log(data: dict) -> None:
-    save_json_file(MUTE_LOG_FILE, data)
-
-def load_warn_log() -> dict:
-    return load_json_file(WARN_LOG_FILE)
-
-def save_warn_log(data: dict) -> None:
-    save_json_file(WARN_LOG_FILE, data)
-
-def has_permission(member: discord.Member, command_name: str) -> bool:
-    allowed_roles = PERMISSIONS.get(command_name, [])
-    if not allowed_roles:
-        return False
-    if not member or not hasattr(member, "roles"):
-        return False
-    return any(role.id in allowed_roles for role in member.roles)
-
-async def send_log_embed(title: str, user: discord.Member, moderator: discord.Member, reason: str, extra: dict = None):
-    channel = bot.get_channel(LOG_CHANNEL_ID)
-    if not channel:
-        print("Nie znaleziono kanału logów!")
-        return
-
-    description = (
-        f"**Użytkownik:** {user} (`{user.id}`)\n"
-        f"**Moderator:** {moderator} (`{moderator.id if moderator else 'Bot'})`\n"
-        f"**Powód:** {reason}"
-    )
-    if extra:
-        for key, value in extra.items():
-            description += f"\n**{key}:** {value}"
-
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=discord.Color.orange(),
-        timestamp=datetime.utcnow()
-    )
-    await channel.send(embed=embed)
-
-
-@tree.command(guild=guild, name="mute", description="Wycisz użytkownika")
-@app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", czas="Czas wyciszenia w minutach")
-async def mute(interaction: discord.Interaction, user: discord.Member, reason: str, czas: int):
-    if not has_permission(interaction.user, "mute"):
-        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    role = interaction.guild.get_role(MUTE_ROLE_ID)
-    if not role:
-        await interaction.followup.send("Nie znaleziono roli wyciszonego.", ephemeral=True)
-        return
-
-    if role in user.roles:
-        await interaction.followup.send("Ten użytkownik jest już wyciszony.", ephemeral=True)
-        return
-
-    roles_to_remove = [r for r in user.roles if r.id != interaction.guild.id and r.id != MUTE_ROLE_ID]
-
-    mute_log = load_mute_log()
-    mute_log[str(user.id)] = [r.id for r in roles_to_remove]
-    save_mute_log(mute_log)
-
-    try:
-        await user.remove_roles(*roles_to_remove, reason="Backup i usunięcie przed mute")
-        await user.add_roles(role, reason=reason)
-    except Exception as e:
-        await interaction.followup.send(f"Błąd przy nadawaniu/odbieraniu roli: {e}", ephemeral=True)
-        return
-
-    koniec = datetime.utcnow() + timedelta(minutes=czas)
-    koniec_timestamp = int(koniec.timestamp())
-
-    await send_log_embed(
-        title="🔇 Mute",
-        user=user,
-        moderator=interaction.user,
-        reason=reason,
-        extra={
-            "Czas": f"{czas} minut",
-            "Koniec wyciszenia": f"<t:{koniec_timestamp}:F>"
-        }
-    )
-    await interaction.followup.send(f"✅ Użytkownik {user} został wyciszony na {czas} minut z powodu: {reason}", ephemeral=True)
-
-    async def unmute_task():
-        await asyncio.sleep(czas * 60)
-        try:
-            user_refresh = await interaction.guild.fetch_member(user.id)
-            if user_refresh and role in user_refresh.roles:
-                await user_refresh.remove_roles(role, reason="Koniec wyciszenia")
-
-                mute_log = load_mute_log()
-                role_ids = mute_log.get(str(user.id), [])
-                roles_to_add = [interaction.guild.get_role(rid) for rid in role_ids if interaction.guild.get_role(rid)]
-                if roles_to_add:
-                    await user_refresh.add_roles(*roles_to_add, reason="Przywrócenie ról po wyciszeniu")
-
-                mute_log.pop(str(user.id), None)
-                save_mute_log(mute_log)
-
-                await send_log_embed(
-                    title="🔈 Unmute (automatyczny)",
-                    user=user_refresh,
-                    moderator=bot.user,
-                    reason="Koniec czasu wyciszenia"
-                )
-        except Exception as e:
-            print(f"Błąd przy zdejmowaniu roli wyciszenia/przywracaniu ról: {e}")
-
-    bot.loop.create_task(unmute_task())
-
-
-@tree.command(guild=guild, name="unmute", description="Odcisz użytkownika")
-@app_commands.describe(user="Użytkownik do odciszenia", reason="Powód odciszenia")
-async def unmute(interaction: discord.Interaction, user: discord.Member, reason: str):
-    if not has_permission(interaction.user, "unmute"):
-        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    role = interaction.guild.get_role(MUTE_ROLE_ID)
-    if not role:
-        await interaction.followup.send("Nie znaleziono roli wyciszonego.", ephemeral=True)
-        return
-
-    if role not in user.roles:
-        await interaction.followup.send("Ten użytkownik nie jest wyciszony.", ephemeral=True)
-        return
-
-    try:
-        await user.remove_roles(role, reason=reason)
-
-        mute_log = load_mute_log()
-        role_ids = mute_log.get(str(user.id), [])
-        roles_to_add = [interaction.guild.get_role(rid) for rid in role_ids if interaction.guild.get_role(rid)]
-        if roles_to_add:
-            await user.add_roles(*roles_to_add, reason="Przywrócenie ról po unmute")
-
-        mute_log.pop(str(user.id), None)
-        save_mute_log(mute_log)
-
-    except Exception as e:
-        await interaction.followup.send(f"Błąd przy zdejmowaniu roli: {e}", ephemeral=True)
-        return
-
-    await send_log_embed(
-        title="🔈 Unmute",
-        user=user,
-        moderator=interaction.user,
-        reason=reason
-    )
-    await interaction.followup.send(f"✅ Użytkownik {user} został odciszony.", ephemeral=True)
-
-
-@tree.command(guild=guild, name="warn", description="Ostrzeż użytkownika")
-@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
-async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
-    if not has_permission(interaction.user, "warn"):
-        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    await send_log_embed(
-        title="⚠️ Warn",
-        user=user,
-        moderator=interaction.user,
-        reason=reason
-    )
-
-    warn_log = load_warn_log()
-    uid = str(user.id)
-    if uid not in warn_log:
-        warn_log[uid] = []
-
-    warn_log[uid].append({
-        "reason": reason,
-        "moderator": interaction.user.id,
-        "timestamp": datetime.utcnow().isoformat()
-    })
-
-    save_warn_log(warn_log)
-
-    await interaction.followup.send(f"✅ Użytkownik {user} został ostrzeżony z powodu: {reason}", ephemeral=True)
-
-
-@tree.command(guild=guild, name="ban", description="Zbanuj użytkownika")
-@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód bana")
-async def ban(interaction: discord.Interaction, user: discord.Member, reason: str):
-    if not has_permission(interaction.user, "ban"):
-        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    try:
-        await user.ban(reason=reason)
-    except Exception as e:
-        await interaction.followup.send(f"Błąd przy banowaniu: {e}", ephemeral=True)
-        return
-
-    await send_log_embed(
-        title="⛔ Ban",
-        user=user,
-        moderator=interaction.user,
-        reason=reason
-    )
-    await interaction.followup.send(f"✅ Użytkownik {user} został zbanowany.", ephemeral=True)
-
-
-@tree.command(guild=guild, name="kary", description="Sprawdź ile ostrzeżeń i wyciszeń ma użytkownik")
-@app_commands.describe(user="Użytkownik do sprawdzenia")
-async def kary(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.defer(ephemeral=True)
-
-    mute_log = load_mute_log()
-    is_muted = str(user.id) in mute_log
-
-    warn_log = load_warn_log()
-    warns = warn_log.get(str(user.id), [])
-    warn_count = len(warns)
-
-    embed = discord.Embed(
-        title=f"Kary użytkownika {user}",
-        color=discord.Color.red(),
-        timestamp=datetime.utcnow()
-    )
-
-    embed.add_field(name="🔇 Wyciszenie", value="✅ Aktywne" if is_muted else "Brak", inline=False)
-    embed.add_field(name="⚠️ Ostrzeżenia", value=f"{warn_count} ostrzeżeń", inline=False)
-
-    await interaction.followup.send(embed=embed, ephemeral=True)
+# Usuwamy domyślne help command, jeśli potrzebne (opcjonalne)
+bot.remove_command("help")
 
 
 @bot.event
 async def on_ready():
-    print(f"Zalogowano jako {bot.user}")
-    try:
-        await tree.sync(guild=guild)
-        print("Slash commands zsynchronizowane na guild!")
-    except Exception as e:
-        print(f"Błąd synchronizacji slash commands: {e}")
+    """Event po uruchomieniu bota."""
+    await bot.tree.sync()  # synchronizacja slash commandów
+    print(f"Zalogowano jako: {bot.user} (ID: {bot.user.id})")
+    print("Slash commands zsynchronizowane.")
+    update_status.start()
+    ping_uptime.start()
 
-    await update_presence()
-    update_presence_loop.start()
-    ping_uptimerobot.start()
-
-async def update_presence():
-    try:
-        for guild_obj in bot.guilds:
-            members = [member async for member in guild_obj.fetch_members(limit=None)]
-            member_count = len(members)
-            activity = discord.Activity(type=discord.ActivityType.watching, name=f"GOATY {member_count} osób")
-            await bot.change_presence(activity=activity)
-            break
-    except Exception as e:
-        print(f"Błąd podczas update_presence: {e}")
 
 @tasks.loop(minutes=10)
-async def update_presence_loop():
-    await update_presence()
+async def update_status():
+    """Pętla aktualizująca status bota co 10 minut."""
+    try:
+        guilds = bot.guilds
+        member_count = sum(guild.member_count for guild in guilds)
+        status = f"Watching gg/goatyrblx {member_count} osób"
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
+    except Exception as e:
+        print(f"Błąd podczas aktualizacji statusu: {e}")
+
 
 @tasks.loop(minutes=5)
-async def ping_uptimerobot():
-    async with aiohttp.ClientSession() as session:
-        try:
+async def ping_uptime():
+    """Pętla pingująca URL uptime co 5 minut."""
+    try:
+        async with aiohttp.ClientSession() as session:
             async with session.get(UPTIME_ROBOT_URL) as resp:
-                if resp.status == 200:
-                    print("UptimeRobot: Ping OK")
-                else:
-                    print(f"UptimeRobot: Błąd pingowania, status {resp.status}")
+                text = await resp.text()
+                print(f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}] Ping uptime, status: {resp.status}")
+    except Exception as e:
+        print(f"Błąd podczas pingowania uptime: {e}")
+
+
+# --- KOMENDY SLASH ---
+
+@bot.tree.command(name="mute", description="Wycisza użytkownika na określony czas (w minutach).")
+@app_commands.describe(user="Użytkownik do wyciszenia", time="Czas wyciszenia w minutach")
+async def mute(interaction: discord.Interaction, user: discord.Member, time: int):
+    # Sprawdzenie uprawnień
+    if not has_permission(interaction.user, "mute"):
+        await interaction.response.send_message("Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
+    mute_role = interaction.guild.get_role(MUTE_ROLE_ID)
+    if not mute_role:
+        await interaction.response.send_message("Rola wyciszenia (Muted) nie została znaleziona.", ephemeral=True)
+        return
+
+    if mute_role in user.roles:
+        await interaction.response.send_message("Ten użytkownik jest już wyciszony.", ephemeral=True)
+        return
+
+    # Backup obecnych ról użytkownika (oprócz @everyone i roli Muted)
+    roles_to_remove = [role.id for role in user.roles if role.id != interaction.guild.id and role.id != MUTE_ROLE_ID]
+
+    mute_log = load_mute_log()
+    mute_log[str(user.id)] = {
+        "roles": roles_to_remove,
+        "unmute_time": (datetime.utcnow() + timedelta(minutes=time)).isoformat()
+    }
+    save_mute_log(mute_log)
+
+    # Usunięcie ról i dodanie roli Muted
+    try:
+        await user.remove_roles(*[interaction.guild.get_role(rid) for rid in roles_to_remove], reason=f"Wyciszenie przez {interaction.user} na {time} minut")
+        await user.add_roles(mute_role, reason=f"Wyciszenie przez {interaction.user} na {time} minut")
+    except Exception as e:
+        await interaction.response.send_message(f"Błąd podczas nadawania/odejmowania ról: {e}", ephemeral=True)
+        return
+
+    await interaction.response.send_message(f"{user.mention} został wyciszony na {time} minut.", ephemeral=False)
+
+    # Logowanie
+    desc = f"Użytkownik {user.mention} został wyciszony przez {interaction.user.mention} na {time} minut.\nBackup ról: {len(roles_to_remove)} role."
+    await send_log_embed(bot, "Mute", desc, discord.Color.white())
+
+    # Automatyczne odciszenie po czasie
+    await asyncio.sleep(time * 60)
+    # Wczytanie znowu, bo w międzyczasie może się zmienić
+    mute_log = load_mute_log()
+    if str(user.id) in mute_log:
+        try:
+            # Usuwamy rolę mute
+            await user.remove_roles(mute_role, reason="Automatyczne odciszenie po czasie mute")
+            # Przywracamy role z backupu
+            roles_ids = mute_log[str(user.id)]["roles"]
+            roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
+            await user.add_roles(*roles, reason="Przywrócenie ról po odciszeniu")
+            # Usuwamy wpis z logu
+            del mute_log[str(user.id)]
+            save_mute_log(mute_log)
+            # Logujemy odciszenie
+            desc = f"Automatyczne odciszenie użytkownika {user.mention} po upływie {time} minut."
+            await send_log_embed(bot, "Unmute (auto)", desc, discord.Color.green())
         except Exception as e:
-            print(f"UptimeRobot: Wyjątek pingowania: {e}")
+            await send_log_embed(bot, "Błąd przy auto unmute", f"Nie udało się odciszyć {user.mention} automatycznie:\n{e}", discord.Color.red())
 
-@ping_uptimerobot.before_loop
-async def before_ping():
-    await bot.wait_until_ready()
 
-bot.run(get_token())
+@bot.tree.command(name="unmute", description="Odcisza użytkownika ręcznie.")
+@app_commands.describe(user="Użytkownik do odciszenia")
+async def unmute(interaction: discord.Interaction, user: discord.Member):
+    # Sprawdzenie uprawnień
+    if not has_permission(interaction.user, "unmute"):
+        await interaction.response.send_message("Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
+    mute_role = interaction.guild.get_role(MUTE_ROLE_ID)
+    if not mute_role:
+        await interaction.response.send_message("Rola wyciszenia (Muted) nie została znaleziona.", ephemeral=True)
+        return
+
+    mute_log = load_mute_log()
+    if str(user.id) not in mute_log:
+        await interaction.response.send_message("Ten użytkownik nie jest wyciszony lub brak danych backupu ról.", ephemeral=True)
+        return
+
+    try:
+        # Usunięcie roli mute
+        await user.remove_roles(mute_role, reason=f"Odciszenie przez {interaction.user}")
+
+        # Przywrócenie ról z backupu
+        roles_ids = mute_log[str(user.id)]["roles"]
+        roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
+        await user.add_roles(*roles, reason=f"Odciszenie przez {interaction.user}")
+
+        # Usunięcie z logu
+        del mute_log[str(user.id)]
+        save_mute_log(mute_log)
+
+        await interaction.response.send_message(f"{user.mention} został odciszony.", ephemeral=False)
+
+        desc = f"Użytkownik {user.mention} został odciszony przez {interaction.user.mention}."
+        await send_log_embed(bot, "Unmute", desc, discord.Color.green())
+
+    except Exception as e:
+        await interaction.response.send_message(f"Błąd podczas odciszania: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="warn", description="Ostrzega użytkownika.")
+@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    # Sprawdzenie uprawnień
+    if not has_permission(interaction.user, "warn"):
+        await interaction.response.send_message("Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
+    desc = (
+        f"**Ostrzeżony użytkownik:** {user.mention} (`{user.id}`)\n"
+        f"**Ostrzeżenie od:** {interaction.user.mention}\n"
+        f"**Powód:** {reason}"
+    )
+    await send_log_embed(bot, "Ostrzeżenie", desc, discord.Color.gold())
+    await interaction.response.send_message(f"{user.mention} został ostrzeżony.", ephemeral=False)
+
+
+@bot.tree.command(name="ban", description="Banuje użytkownika.")
+@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód bana (opcjonalne)")
+async def ban(interaction: discord.Interaction, user: discord.Member, reason: str = "Brak podanego powodu"):
+    # Sprawdzenie uprawnień
+    if not has_permission(interaction.user, "ban"):
+        await interaction.response.send_message("Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
+    try:
+        await user.ban(reason=f"Ban przez {interaction.user}: {reason}")
+        await interaction.response.send_message(f"{user.mention} został zbanowany.", ephemeral=False)
+
+        desc = (
+            f"**Zbanowany użytkownik:** {user.mention} (`{user.id}`)\n"
+            f"**Banujący:** {interaction.user.mention}\n"
+            f"**Powód:** {reason}"
+        )
+        await send_log_embed(bot, "Ban", desc, discord.Color.red())
+
+    except Exception as e:
+        await interaction.response.send_message(f"Błąd podczas banowania: {e}", ephemeral=True)
+
+
+# --- START BOTA ---
+
+if __name__ == "__main__":
+    keep_alive.keep_alive()  # wywołanie funkcji keep_alive z pliku keep_alive.py
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        print("Brak tokena w zmiennej środowiskowej DISCORD_TOKEN!")
+        exit(1)
+    bot.run(token)
