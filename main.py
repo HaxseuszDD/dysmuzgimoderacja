@@ -17,6 +17,7 @@ LOG_CHANNEL_ID = 1388833060933337129  # ID kanału logów
 
 UPTIME_ROBOT_URL = "https://10f7dc3b-c58d-4bd9-a7f5-0007e7a53bbb-00-3i9bf2ihu3ras.riker.replit.dev/"  # Podmień na swój URL
 MUTE_LOG_FILE = "mute_logi_role.txt"  # Plik do zapisywania backupu ról
+WARN_LOG_FILE = "warn_logi.json"      # <-- DODANE: plik do logów ostrzeżeń
 
 # Mapowanie komend na listę ID ról, które mogą ich używać
 PERMISSIONS = {
@@ -49,6 +50,20 @@ def load_mute_log():
 
 def save_mute_log(data):
     with open(MUTE_LOG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+# --- DODANE FUNKCJE do warn logu ---
+def load_warn_log():
+    if not os.path.isfile(WARN_LOG_FILE):
+        return {}
+    with open(WARN_LOG_FILE, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+def save_warn_log(data):
+    with open(WARN_LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def has_permission(member: discord.Member, command_name: str) -> bool:
@@ -185,6 +200,7 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został odciszony.", ephemeral=True)
 
+# --- EDYCJA komendy warn - DODANE LOGOWANIE ---
 @tree.command(name="warn", description="Ostrzeż użytkownika")
 @app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
 async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
@@ -199,6 +215,21 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         moderator=interaction.user,
         reason=reason
     )
+
+    # --- LOGOWANIE WARN ---
+    warn_log = load_warn_log()
+    uid = str(user.id)
+    if uid not in warn_log:
+        warn_log[uid] = []
+
+    warn_log[uid].append({
+        "reason": reason,
+        "moderator": interaction.user.id,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+
+    save_warn_log(warn_log)
+
     await interaction.followup.send(f"✅ Użytkownik {user} został ostrzeżony z powodu: {reason}", ephemeral=True)
 
 @tree.command(name="ban", description="Zbanuj użytkownika")
@@ -222,6 +253,30 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
         reason=reason
     )
     await interaction.followup.send(f"✅ Użytkownik {user} został zbanowany.", ephemeral=True)
+
+# --- NOWA KOMENDA: /kary ---
+@tree.command(name="kary", description="Sprawdź ile ostrzeżeń i wyciszeń ma użytkownik")
+@app_commands.describe(user="Użytkownik do sprawdzenia")
+async def kary(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+
+    mute_log = load_mute_log()
+    is_muted = str(user.id) in mute_log
+
+    warn_log = load_warn_log()
+    warns = warn_log.get(str(user.id), [])
+    warn_count = len(warns)
+
+    embed = discord.Embed(
+        title=f"Kary użytkownika {user}",
+        color=discord.Color.red(),
+        timestamp=datetime.utcnow()
+    )
+
+    embed.add_field(name="🔇 Wyciszenie", value="✅ Aktywne" if is_muted else "Brak", inline=False)
+    embed.add_field(name="⚠️ Ostrzeżenia", value=f"{warn_count} ostrzeżeń", inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.event
 async def on_ready():
