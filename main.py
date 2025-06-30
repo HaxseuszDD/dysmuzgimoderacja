@@ -95,7 +95,7 @@ async def send_log_embed(title: str, user: discord.Member, moderator: discord.Me
         for key, value in extra.items():
             description += f"\n{key}: {value}"
 
-    embed = discord.Embed(title=title, description=description, color=discord.Color.orange(), timestamp=datetime.utcnow())
+    embed = discord.Embed(title=title, description=description, color=discord.Color.white(), timestamp=datetime.utcnow())
     await channel.send(embed=embed)
 
 @tree.command(name="mute", description="Wycisz użytkownika")
