@@ -266,7 +266,7 @@ async def on_ready():
 async def update_presence():
     for guild in bot.guilds:
         member_count = guild.member_count
-        activity = discord.Activity(type=discord.ActivityType.watching, name=f"Imperium kebabow {member_count} osób")
+        activity = discord.Activity(type=discord.ActivityType.watching, name=f"GOATY {member_count} osób")
         await bot.change_presence(activity=activity)
         break
 
