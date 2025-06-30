@@ -7,14 +7,19 @@ import json
 import os
 
 # --- KONFIGURACJA ---
-MUTE_ROLE_ID = 1389325433161646241  # ID roli wyciszenia
-LOG_CHANNEL_ID = 1388833060933337129  # ID kanału logów
 
-MUTE_LOG_FILE = "mute_log.json"           # Backup ról przy mutowaniu
-MUTE_TIME_LOG_FILE = "mute_time_log.json" # Backup czasu muta
+# ID roli mute (wyciszenia)
+MUTE_ROLE_ID = 1389325433161646241  
+
+# ID kanału logów
+LOG_CHANNEL_ID = 1388833060933337129  
+
+# Pliki JSON do backupu i logów
+MUTE_LOG_FILE = "mute_log.json"            # Backup ról wyciszonego
+MUTE_TIME_LOG_FILE = "mute_time_log.json"  # Backup czasu muta
 PUNISHMENT_LOG_FILE = "punishment_log.json"  # Liczniki mute/warn/ban
 
-# Role które mogą korzystać z danych komend
+# Role z dostępem do poszczególnych komend
 PERMISSIONS = {
     "mute": [1388937014379810916, 1388937017185800375, 1388938738574557305, 1388939460372070510, 1386884881363243140, 1386884886341750886],
     "unmute": [1388937014379810916, 1388937017185800375, 1388938738574557305, 1388939460372070510, 1386884881363243140],
@@ -22,12 +27,14 @@ PERMISSIONS = {
     "warn": [1386884859502399520, 1386884865265369119, 1386884871062028480, 1386884876233474089, 1386884881363243140, 1386884886341750886],
 }
 
+# --- POBRANIE TOKENA ---
 def get_token():
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise RuntimeError("Brak zmiennej środowiskowej DISCORD_TOKEN!")
     return token
 
+# --- INTENTY I INICJALIZACJA BOTA ---
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -36,37 +43,53 @@ tree = bot.tree
 # --- FUNKCJE POMOCNICZE ---
 
 def load_json(filename):
+    """Ładuje dane z pliku JSON lub zwraca pusty dict, jeśli plik nie istnieje."""
     if not os.path.isfile(filename):
         return {}
     try:
         with open(filename, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception:
         return {}
 
 def save_json(filename, data):
+    """Zapisuje dane do pliku JSON z ładnym formatowaniem."""
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def has_permission(member: discord.Member, command_name: str) -> bool:
+    """Sprawdza, czy członek ma odpowiednią rolę do wykonania komendy."""
     allowed_roles = PERMISSIONS.get(command_name, [])
     if not allowed_roles:
         return False
     return any(role.id in allowed_roles for role in member.roles)
 
 async def send_log_embed(title: str, user: discord.Member, moderator: discord.Member, reason: str, extra: dict = None):
+    """Wysyła embed z logiem do kanału logów."""
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if not channel:
         print("Kanał logów nie znaleziony!")
         return
-    description = f"Użytkownik: {user} ({user.id})\nModerator: {moderator.display_name}\nPowód: {reason}"
+
+    description = (
+        f"**Użytkownik:** {user} (`{user.id}`)\n"
+        f"**Moderator:** {moderator} (`{moderator.id}`)\n"
+        f"**Powód:** {reason}"
+    )
+
     if extra:
         for k, v in extra.items():
-            description += f"\n{k}: {v}"
-    embed = discord.Embed(title=title, description=description, color=discord.Color.white(), timestamp=datetime.utcnow())
+            description += f"\n**{k}:** {v}"
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.white(),
+        timestamp=datetime.utcnow()
+    )
     await channel.send(embed=embed)
 
-# --- BOT EVENTY ---
+# --- EVENTY BOTA ---
 
 @bot.event
 async def on_ready():
@@ -80,7 +103,7 @@ async def update_presence():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{total_members} użytkowników"))
 
 async def restore_mutes():
-    """Po restarcie bota odczytaj mute_time_log i przywróć muty, uruchom zadania do unmutowania"""
+    """Po restarcie bota odczytuje mute_time_log i przywraca muty oraz restartuje zadania unmute."""
     mute_time_log = load_json(MUTE_TIME_LOG_FILE)
 
     for user_id_str, end_timestamp in mute_time_log.items():
@@ -104,25 +127,25 @@ async def restore_mutes():
         now_ts = int(datetime.utcnow().timestamp())
         seconds_left = end_timestamp - now_ts
         if seconds_left > 0:
-            # Daj rolę mute jeśli nie ma
+            # Dodaj mute, jeśli nie ma
             if role not in member.roles:
                 await member.add_roles(role, reason="Przywrócenie muta po restarcie bota")
 
-            # Uruchom zadanie unmute po czasie pozostałym
+            # Uruchom zadanie odliczania unmute
             bot.loop.create_task(unmute_after(member, seconds_left))
 
 async def unmute_after(member: discord.Member, seconds: int):
+    """Funkcja do automatycznego zdejmowania muta po czasie."""
     await asyncio.sleep(seconds)
 
     mute_time_log = load_json(MUTE_TIME_LOG_FILE)
     mute_log = load_json(MUTE_LOG_FILE)
-    punishment_log = load_json(PUNISHMENT_LOG_FILE)
 
     guild = member.guild
     role = guild.get_role(MUTE_ROLE_ID)
 
     if role not in member.roles:
-        # już nie ma mute, nic nie rób
+        # Jeśli mute już nie ma, usuń z logów
         if str(member.id) in mute_time_log:
             mute_time_log.pop(str(member.id))
             save_json(MUTE_TIME_LOG_FILE, mute_time_log)
@@ -130,7 +153,7 @@ async def unmute_after(member: discord.Member, seconds: int):
 
     now_ts = int(datetime.utcnow().timestamp())
     if mute_time_log.get(str(member.id), 0) > now_ts:
-        # Mut nadal trwa (może przedłużono), nic nie rób
+        # Mute nadal aktywne, nic nie rób
         return
 
     try:
@@ -148,13 +171,13 @@ async def unmute_after(member: discord.Member, seconds: int):
         save_json(MUTE_LOG_FILE, mute_log)
         save_json(MUTE_TIME_LOG_FILE, mute_time_log)
 
-        # Log
+        # Wyślij log do kanału
         await send_log_embed("🔈 Unmute (automatyczny)", member, bot.user, "Koniec czasu wyciszenia")
 
     except Exception as e:
         print(f"Błąd przy zdejmowaniu muta: {e}")
 
-# --- KOMENDY ---
+# --- KOMENDY SLASH ---
 
 @tree.command(name="mute", description="Wycisz użytkownika na określony czas (minuty)")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", czas="Czas wyciszenia w minutach")
@@ -206,6 +229,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     punishment_log[user_id_str]["mutes"] += 1
     save_json(PUNISHMENT_LOG_FILE, punishment_log)
 
+    # Log w kanale
     await send_log_embed(
         title="🔇 Mute",
         user=user,
