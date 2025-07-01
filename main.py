@@ -30,7 +30,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 MUTED_ROLE_ID = 1389325433161646241
 LOG_CHANNEL_ID = 1388833060933337129
-WELCOME_CHANNEL_ID = 123456789012345678  # <-- Wstaw ID kanału powitalnego tutaj
+WELCOME_CHANNEL_ID = 1388823708298252328  # <-- Wstaw ID kanału powitalnego tutaj
 
 PERMISSIONS = {
     "mute": [
