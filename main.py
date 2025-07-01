@@ -101,6 +101,8 @@ def delete_roles(user_id):
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
     await bot.tree.sync()
+    # Custom presence
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="discord.gg/goatyrblx"))
 
 @bot.tree.command(name="mute", description="Wycisza użytkownika na czas (w minutach)")
 @app_commands.describe(user="Kogo wyciszyć", reason="Powód", time="Czas wyciszenia (minuty)")
@@ -135,6 +137,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await asyncio.sleep(time * 60)
 
+    # Auto unmute
     roles_ids = load_roles(user.id)
     roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
     try:
@@ -145,7 +148,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         unmute_embed.description = (
             f"**Użytkownik:** {user.name}#{user.discriminator}\n"
             f"**Moderator:** System\n"
-            f"**Czas:** Mute zakończony"
+            f"**Powód:** Kara minęła"
         )
         if log_channel:
             await log_channel.send(embed=unmute_embed)
@@ -154,8 +157,8 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         print(f"❌ Błąd przy automatycznym unmute: {e}")
 
 @bot.tree.command(name="unmute", description="Usuwa wyciszenie użytkownika")
-@app_commands.describe(user="Kogo odciszyć")
-async def unmute(interaction: discord.Interaction, user: discord.Member):
+@app_commands.describe(user="Kogo odciszyć", reason="Powód odciszenia (opcjonalny)")
+async def unmute(interaction: discord.Interaction, user: discord.Member, reason: str = None):
     if not has_permission(interaction, "unmute"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
         return
@@ -177,6 +180,8 @@ async def unmute(interaction: discord.Interaction, user: discord.Member):
         f"**Użytkownik:** {user.name}#{user.discriminator}\n"
         f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
     )
+    if reason:
+        embed.description += f"\n**Powód:** {reason}"
 
     await interaction.response.send_message(f"{user.name} został odciszony.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
