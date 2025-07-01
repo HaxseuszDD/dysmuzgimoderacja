@@ -121,7 +121,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     await user.edit(roles=[muted_role], reason=reason)
     end_time = datetime.utcnow() + timedelta(minutes=time)
 
-    embed = discord.Embed(title="🔇 Mute", color=discord.Color.red())
+    embed = discord.Embed(title="`🔇` Mute", color=discord.Color.red())
     embed.description = (
         f"**Użytkownik:** {user.name}#{user.discriminator}\n"
         f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
@@ -144,7 +144,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         await user.edit(roles=roles, reason="Auto unmute")
         delete_roles(user.id)
 
-        unmute_embed = discord.Embed(title="🔊 Unmute (automatyczny)", color=discord.Color.green())
+        unmute_embed = discord.Embed(title="`🔊` Unmute (automatyczny)", color=discord.Color.green())
         unmute_embed.description = (
             f"**Użytkownik:** {user.name}#{user.discriminator}\n"
             f"**Moderator:** System\n"
@@ -175,7 +175,7 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
         await user.edit(roles=roles, reason="Ręczny unmute")
     delete_roles(user.id)
 
-    embed = discord.Embed(title="🔊 Unmute", color=discord.Color.green())
+    embed = discord.Embed(title="`🔊` Unmute", color=discord.Color.green())
     embed.description = (
         f"**Użytkownik:** {user.name}#{user.discriminator}\n"
         f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
@@ -196,7 +196,7 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
         return
 
     await user.ban(reason=reason)
-    embed = discord.Embed(title="⛔ Ban", color=discord.Color.dark_red())
+    embed = discord.Embed(title="`⛔` Ban", color=discord.Color.dark_red())
     embed.description = (
         f"**Użytkownik:** {user.name}#{user.discriminator}\n"
         f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
@@ -218,7 +218,7 @@ async def unban(interaction: discord.Interaction, user_id: str):
     try:
         user = await bot.fetch_user(int(user_id))
         await interaction.guild.unban(user)
-        embed = discord.Embed(title="✅ Unban", color=discord.Color.green())
+        embed = discord.Embed(title="`✅` Unban", color=discord.Color.green())
         embed.description = (
             f"**Użytkownik:** {user.name}#{user.discriminator}\n"
             f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
