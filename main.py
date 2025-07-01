@@ -32,7 +32,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 MUTED_ROLE_ID = 1389325433161646241
 LOG_CHANNEL_ID = 1388833060933337129
 WELCOME_CHANNEL_ID = 1388823708298252328
-ALLOWED_COMMAND_CHANNEL_ID = 1388833046425239552  # <-- Tylko ten kanał
 
 # Uprawnienia do komend wg ról
 PERMISSIONS = {
@@ -72,9 +71,6 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
-def is_allowed_channel(interaction: discord.Interaction) -> bool:
-    return interaction.channel.id == ALLOWED_COMMAND_CHANNEL_ID
-
 # === SQLite Setup ===
 conn = sqlite3.connect('roles.db')
 cursor = conn.cursor()
@@ -112,7 +108,6 @@ def delete_roles(user_id: int):
     cursor.execute('DELETE FROM muted_roles WHERE user_id = ?', (user_id,))
     conn.commit()
 
-# === Warnings ===
 def add_warning(user_id: int, moderator_id: int, reason: str):
     timestamp = datetime.utcnow().isoformat()
     cursor.execute('INSERT INTO warnings (user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?)',
@@ -123,7 +118,7 @@ def clear_warnings(user_id: int):
     cursor.execute('DELETE FROM warnings WHERE user_id = ?', (user_id,))
     conn.commit()
 
-def get_warn_count(user_id: int):
+def count_warnings(user_id: int) -> int:
     cursor.execute('SELECT COUNT(*) FROM warnings WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     return result[0] if result else 0
@@ -156,26 +151,15 @@ async def on_member_join(member: discord.Member):
     )
     await welcome_channel.send(embed=embed)
 
-# === Dekorator do sprawdzania kanału i uprawnień ===
-def check_command(command_name):
-    async def predicate(interaction: discord.Interaction):
-        if not is_allowed_channel(interaction):
-            await interaction.response.send_message(
-                f"❌ Tą komendę można użyć tylko na <#{ALLOWED_COMMAND_CHANNEL_ID}>", ephemeral=True)
-            return False
-        if not has_permission(interaction, command_name):
-            await interaction.response.send_message(
-                "❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-            return False
-        return True
-    return app_commands.check(predicate)
-
 # === Komendy ===
 
 @bot.tree.command(name="mute", description="Wycisza użytkownika na czas (w minutach)")
 @app_commands.describe(user="Kogo wyciszyć", reason="Powód", time="Czas wyciszenia (minuty)")
-@check_command("mute")
 async def mute(interaction: discord.Interaction, user: discord.Member, reason: str, time: int):
+    if not has_permission(interaction, "mute"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
     muted_role = interaction.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await interaction.response.send_message("❌ Nie znaleziono roli Muted!", ephemeral=True)
@@ -222,8 +206,11 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
 @bot.tree.command(name="unmute", description="Usuwa wyciszenie użytkownika")
 @app_commands.describe(user="Kogo odciszyć", reason="Powód odciszenia (opcjonalny)")
-@check_command("unmute")
 async def unmute(interaction: discord.Interaction, user: discord.Member, reason: str = None):
+    if not has_permission(interaction, "unmute"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
     muted_role = interaction.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await interaction.response.send_message("❌ Rola Muted nie istnieje!", ephemeral=True)
@@ -248,8 +235,11 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
 
 @bot.tree.command(name="ban", description="Banuje użytkownika")
 @app_commands.describe(user="Kogo zbanować", reason="Powód bana")
-@check_command("ban")
 async def ban(interaction: discord.Interaction, user: discord.Member, reason: str = "Brak powodu"):
+    if not has_permission(interaction, "ban"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
     await user.ban(reason=reason)
     embed = discord.Embed(title="`⛔` Ban", color=discord.Color.dark_red())
     embed.description = f"**Użytkownik:** {user}\n**Moderator:** {interaction.user}\n**Powód:** {reason}"
@@ -261,8 +251,11 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
 
 @bot.tree.command(name="unban", description="Odbanowuje użytkownika po ID")
 @app_commands.describe(user_id="ID użytkownika do odbanowania")
-@check_command("ban")
 async def unban(interaction: discord.Interaction, user_id: str):
+    if not has_permission(interaction, "ban"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
     try:
         user = await bot.fetch_user(int(user_id))
         await interaction.guild.unban(user)
@@ -275,13 +268,15 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd: {e}", ephemeral=True)
 
-# === WARN ===
 @bot.tree.command(name="warn", description="Ostrzega użytkownika")
 @app_commands.describe(user="Kogo ostrzec", reason="Powód ostrzeżenia")
-@check_command("warn")
 async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if not has_permission(interaction, "warn"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
     add_warning(user.id, interaction.user.id, reason)
-    warns_count = get_warn_count(user.id)
+    warn_count = count_warnings(user.id)
 
     embed = discord.Embed(title="`⚠️` Ostrzeżenie", color=discord.Color.orange())
     embed.description = (
@@ -289,24 +284,18 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         f"**Moderator:** {interaction.user}\n"
         f"**Powód:** {reason}"
     )
-    embed.set_footer(text=f"Liczba ostrzeżeń: {warns_count}")
+    embed.set_footer(text=f"⚠️ Liczba ostrzeżeń: {warn_count}")
 
     await interaction.response.send_message(f"{user.name} został ostrzeżony.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(embed=embed)
 
-# === CLEARWARNS (dla właściciela) ===
 @bot.tree.command(name="clearwarns", description="Usuwa wszystkie warny użytkownika")
 @app_commands.describe(user="Użytkownik, któremu chcesz usunąć warny")
 async def clearwarns(interaction: discord.Interaction, user: discord.Member):
     if interaction.user.id != 1283123203748925493:
         await interaction.response.send_message("❌ Ta komenda jest dostępna tylko dla właściciela.", ephemeral=True)
-        return
-
-    if interaction.channel.id != ALLOWED_COMMAND_CHANNEL_ID:
-        await interaction.response.send_message(
-            f"❌ Tą komendę można użyć tylko na <#{ALLOWED_COMMAND_CHANNEL_ID}>", ephemeral=True)
         return
 
     clear_warnings(user.id)
