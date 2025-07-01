@@ -6,19 +6,19 @@ from datetime import datetime, timedelta
 import os
 import sqlite3
 import json
-from flask import Flask        # 🔧 DODANE
-import threading               # 🔧 DODANE
+from flask import Flask
+import threading
 
 # === Flask app ===
-app = Flask(__name__)          # 🔧 DODANE
+app = Flask(__name__)
 
-@app.route("/")                # 🔧 DODANE
-def home():                    # 🔧 DODANE
-    return "Bot is running"    # 🔧 DODANE
+@app.route("/")
+def home():
+    return "Bot is running"
 
-def run_flask():               # 🔧 DODANE
-    port = int(os.environ.get("PORT", 5000))   # 🔧 DODANE
-    app.run(host="0.0.0.0", port=port)         # 🔧 DODANE
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
 # === Discord Bot ===
 def get_token():
@@ -120,13 +120,15 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     end_time = datetime.utcnow() + timedelta(minutes=time)
 
     embed = discord.Embed(title="🔇 Mute", color=discord.Color.red())
-    embed.add_field(name="Użytkownik", value=f"{user.mention}", inline=False)
-    embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
-    embed.add_field(name="Powód", value=reason, inline=False)
-    embed.add_field(name="Czas", value=f"{time} minut", inline=True)
-    embed.add_field(name="Koniec wyciszenia", value=f"<t:{int(end_time.timestamp())}:F>", inline=True)
+    embed.description = (
+        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
+        f"**Powód:** {reason}\n"
+        f"**Czas:** {time} minut\n"
+        f"**Koniec wyciszenia:** <t:{int(end_time.timestamp())}:F>"
+    )
 
-    await interaction.response.send_message(f"{user.mention} został zmutowany.", ephemeral=True)
+    await interaction.response.send_message(f"{user.name} został zmutowany.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(embed=embed)
@@ -140,9 +142,11 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         delete_roles(user.id)
 
         unmute_embed = discord.Embed(title="🔊 Unmute (automatyczny)", color=discord.Color.green())
-        unmute_embed.add_field(name="Użytkownik", value=f"{user.mention}", inline=False)
-        unmute_embed.add_field(name="Moderator", value="System", inline=False)
-        unmute_embed.add_field(name="Czas", value="Mute zakończony", inline=False)
+        unmute_embed.description = (
+            f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+            f"**Moderator:** System\n"
+            f"**Czas:** Mute zakończony"
+        )
         if log_channel:
             await log_channel.send(embed=unmute_embed)
 
@@ -169,10 +173,12 @@ async def unmute(interaction: discord.Interaction, user: discord.Member):
     delete_roles(user.id)
 
     embed = discord.Embed(title="🔊 Unmute", color=discord.Color.green())
-    embed.add_field(name="Użytkownik", value=f"{user.mention}", inline=False)
-    embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
+    embed.description = (
+        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
+    )
 
-    await interaction.response.send_message(f"{user.mention} został odciszony.", ephemeral=True)
+    await interaction.response.send_message(f"{user.name} został odciszony.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(embed=embed)
@@ -186,11 +192,13 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
 
     await user.ban(reason=reason)
     embed = discord.Embed(title="⛔ Ban", color=discord.Color.dark_red())
-    embed.add_field(name="Użytkownik", value=f"{user.mention}", inline=False)
-    embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
-    embed.add_field(name="Powód", value=reason, inline=False)
+    embed.description = (
+        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
+        f"**Powód:** {reason}"
+    )
 
-    await interaction.response.send_message(f"{user.mention} został zbanowany.", ephemeral=True)
+    await interaction.response.send_message(f"{user.name} został zbanowany.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(embed=embed)
@@ -206,8 +214,10 @@ async def unban(interaction: discord.Interaction, user_id: str):
         user = await bot.fetch_user(int(user_id))
         await interaction.guild.unban(user)
         embed = discord.Embed(title="✅ Unban", color=discord.Color.green())
-        embed.add_field(name="Użytkownik", value=f"{user.mention}", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
+        embed.description = (
+            f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+            f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
+        )
 
         await interaction.response.send_message(f"{user.name} został odbanowany.", ephemeral=True)
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -218,5 +228,5 @@ async def unban(interaction: discord.Interaction, user_id: str):
 
 # === Uruchomienie Flask i bota ===
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()     # 🔧 DODANE
+    threading.Thread(target=run_flask).start()
     bot.run(get_token())
