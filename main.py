@@ -108,7 +108,6 @@ def delete_roles(user_id: int):
     cursor.execute('DELETE FROM muted_roles WHERE user_id = ?', (user_id,))
     conn.commit()
 
-# === Warnings ===
 def add_warning(user_id: int, moderator_id: int, reason: str):
     timestamp = datetime.utcnow().isoformat()
     cursor.execute('INSERT INTO warnings (user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?)',
@@ -118,6 +117,11 @@ def add_warning(user_id: int, moderator_id: int, reason: str):
 def clear_warnings(user_id: int):
     cursor.execute('DELETE FROM warnings WHERE user_id = ?', (user_id,))
     conn.commit()
+
+def count_warnings(user_id: int) -> int:
+    cursor.execute('SELECT COUNT(*) FROM warnings WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    return result[0] if result else 0
 
 @bot.event
 async def on_ready():
@@ -264,7 +268,6 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd: {e}", ephemeral=True)
 
-# === WARN ===
 @bot.tree.command(name="warn", description="Ostrzega użytkownika")
 @app_commands.describe(user="Kogo ostrzec", reason="Powód ostrzeżenia")
 async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
@@ -273,6 +276,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         return
 
     add_warning(user.id, interaction.user.id, reason)
+    warn_count = count_warnings(user.id)
 
     embed = discord.Embed(title="`⚠️` Ostrzeżenie", color=discord.Color.orange())
     embed.description = (
@@ -280,13 +284,13 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         f"**Moderator:** {interaction.user}\n"
         f"**Powód:** {reason}"
     )
+    embed.set_footer(text=f"⚠️ Liczba ostrzeżeń: {warn_count}")
 
     await interaction.response.send_message(f"{user.name} został ostrzeżony.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(embed=embed)
 
-# === CLEARWARNS (dla właściciela) ===
 @bot.tree.command(name="clearwarns", description="Usuwa wszystkie warny użytkownika")
 @app_commands.describe(user="Użytkownik, któremu chcesz usunąć warny")
 async def clearwarns(interaction: discord.Interaction, user: discord.Member):
