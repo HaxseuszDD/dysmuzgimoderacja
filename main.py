@@ -25,7 +25,7 @@ def get_token():
     return os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
-intents.members = True  # Potrzebne do on_member_join
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Stałe (ID ról i kanałów)
@@ -71,13 +71,22 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
-# SQLite setup
+# === SQLite Setup ===
 conn = sqlite3.connect('roles.db')
 cursor = conn.cursor()
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS muted_roles (
     user_id INTEGER PRIMARY KEY,
     roles TEXT
+)
+''')
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS warnings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    moderator_id INTEGER,
+    reason TEXT,
+    timestamp TEXT
 )
 ''')
 conn.commit()
@@ -97,6 +106,17 @@ def load_roles(user_id: int):
 
 def delete_roles(user_id: int):
     cursor.execute('DELETE FROM muted_roles WHERE user_id = ?', (user_id,))
+    conn.commit()
+
+# === Warnings ===
+def add_warning(user_id: int, moderator_id: int, reason: str):
+    timestamp = datetime.utcnow().isoformat()
+    cursor.execute('INSERT INTO warnings (user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?)',
+                   (user_id, moderator_id, reason, timestamp))
+    conn.commit()
+
+def clear_warnings(user_id: int):
+    cursor.execute('DELETE FROM warnings WHERE user_id = ?', (user_id,))
     conn.commit()
 
 @bot.event
@@ -127,7 +147,7 @@ async def on_member_join(member: discord.Member):
     )
     await welcome_channel.send(embed=embed)
 
-# --- Komendy slash ---
+# === Komendy ===
 
 @bot.tree.command(name="mute", description="Wycisza użytkownika na czas (w minutach)")
 @app_commands.describe(user="Kogo wyciszyć", reason="Powód", time="Czas wyciszenia (minuty)")
@@ -141,15 +161,11 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.response.send_message("❌ Nie znaleziono roli Muted!", ephemeral=True)
         return
 
-    # Zapisz poprzednie role (bez @everyone)
     previous_roles = [role for role in user.roles if role != interaction.guild.default_role]
     save_roles(user.id, previous_roles)
-
-    # Przypisz tylko muted_role
     await user.edit(roles=[muted_role], reason=reason)
 
     end_time = datetime.utcnow() + timedelta(minutes=time)
-
     embed = discord.Embed(title="`🔇` Mute", color=discord.Color.red())
     embed.description = (
         f"**Użytkownik:** {user}\n"
@@ -166,7 +182,6 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await asyncio.sleep(time * 60)
 
-    # Auto unmute po czasie
     try:
         roles_ids = load_roles(user.id)
         roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
@@ -205,10 +220,7 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
     delete_roles(user.id)
 
     embed = discord.Embed(title="`🔊` Unmute", color=discord.Color.green())
-    embed.description = (
-        f"**Użytkownik:** {user}\n"
-        f"**Moderator:** {interaction.user}"
-    )
+    embed.description = f"**Użytkownik:** {user}\n**Moderator:** {interaction.user}"
     if reason:
         embed.description += f"\n**Powód:** {reason}"
 
@@ -226,11 +238,7 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
 
     await user.ban(reason=reason)
     embed = discord.Embed(title="`⛔` Ban", color=discord.Color.dark_red())
-    embed.description = (
-        f"**Użytkownik:** {user}\n"
-        f"**Moderator:** {interaction.user}\n"
-        f"**Powód:** {reason}"
-    )
+    embed.description = f"**Użytkownik:** {user}\n**Moderator:** {interaction.user}\n**Powód:** {reason}"
 
     await interaction.response.send_message(f"{user.name} został zbanowany.", ephemeral=True)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -248,17 +256,57 @@ async def unban(interaction: discord.Interaction, user_id: str):
         user = await bot.fetch_user(int(user_id))
         await interaction.guild.unban(user)
         embed = discord.Embed(title="`✅` Unban", color=discord.Color.green())
-        embed.description = (
-            f"**Użytkownik:** {user}\n"
-            f"**Moderator:** {interaction.user}"
-        )
-
+        embed.description = f"**Użytkownik:** {user}\n**Moderator:** {interaction.user}"
         await interaction.response.send_message(f"{user.name} został odbanowany.", ephemeral=True)
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(embed=embed)
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd: {e}", ephemeral=True)
+
+# === WARN ===
+@bot.tree.command(name="warn", description="Ostrzega użytkownika")
+@app_commands.describe(user="Kogo ostrzec", reason="Powód ostrzeżenia")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if not has_permission(interaction, "warn"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
+        return
+
+    add_warning(user.id, interaction.user.id, reason)
+
+    embed = discord.Embed(title="`⚠️` Ostrzeżenie", color=discord.Color.orange())
+    embed.description = (
+        f"**Użytkownik:** {user}\n"
+        f"**Moderator:** {interaction.user}\n"
+        f"**Powód:** {reason}"
+    )
+
+    await interaction.response.send_message(f"{user.name} został ostrzeżony.", ephemeral=True)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(embed=embed)
+
+# === CLEARWARNS (dla właściciela) ===
+@bot.tree.command(name="clearwarns", description="Usuwa wszystkie warny użytkownika")
+@app_commands.describe(user="Użytkownik, któremu chcesz usunąć warny")
+async def clearwarns(interaction: discord.Interaction, user: discord.Member):
+    if interaction.user.id != 1283123203748925493:
+        await interaction.response.send_message("❌ Ta komenda jest dostępna tylko dla właściciela.", ephemeral=True)
+        return
+
+    clear_warnings(user.id)
+
+    embed = discord.Embed(title="`🧹` Czyszczenie Ostrzeżeń", color=discord.Color.green())
+    embed.description = (
+        f"**Użytkownik:** {user}\n"
+        f"**Moderator:** {interaction.user}\n"
+        f"**Status:** Wszystkie ostrzeżenia usunięte."
+    )
+
+    await interaction.response.send_message(f"Ostrzeżenia użytkownika {user.name} zostały usunięte.", ephemeral=True)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(embed=embed)
 
 # === Start Flask i bota ===
 if __name__ == "__main__":
