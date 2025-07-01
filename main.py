@@ -6,19 +6,31 @@ from datetime import datetime, timedelta
 import os
 import sqlite3
 import json
+from flask import Flask        # 🔧 DODANE
+import threading               # 🔧 DODANE
 
+# === Flask app ===
+app = Flask(__name__)          # 🔧 DODANE
+
+@app.route("/")                # 🔧 DODANE
+def home():                    # 🔧 DODANE
+    return "Bot is running"    # 🔧 DODANE
+
+def run_flask():               # 🔧 DODANE
+    port = int(os.environ.get("PORT", 5000))   # 🔧 DODANE
+    app.run(host="0.0.0.0", port=port)         # 🔧 DODANE
+
+# === Discord Bot ===
 def get_token():
-    return os.getenv("DISCORD_TOKEN")  # Token pobierany z zmiennej środowiskowej
+    return os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# === Ustawienia ===
-MUTED_ROLE_ID = 1389325433161646241  # <--- ID roli Muted
-LOG_CHANNEL_ID = 1388833060933337129  # <--- ID kanału logów
+MUTED_ROLE_ID = 1389325433161646241
+LOG_CHANNEL_ID = 1388833060933337129
 
-# ===== ROLLE PERMISJI DLA KOMEND =====
 PERMISSIONS = {
     "mute": [
         1388937017185800375,
@@ -56,7 +68,6 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
-# --- SQLite setup ---
 conn = sqlite3.connect('roles.db')
 cursor = conn.cursor()
 
@@ -122,7 +133,6 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await asyncio.sleep(time * 60)
 
-    # Automatyczny unmute po czasie
     roles_ids = load_roles(user.id)
     roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
     try:
@@ -206,4 +216,7 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd: {e}", ephemeral=True)
 
-bot.run(get_token())
+# === Uruchomienie Flask i bota ===
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()     # 🔧 DODANE
+    bot.run(get_token())
