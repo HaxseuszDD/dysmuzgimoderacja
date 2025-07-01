@@ -25,13 +25,15 @@ def get_token():
     return os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
-intents.members = True  # Potrzebne, aby działał on_member_join
+intents.members = True  # Potrzebne do on_member_join
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Stałe (ID ról i kanałów)
 MUTED_ROLE_ID = 1389325433161646241
 LOG_CHANNEL_ID = 1388833060933337129
-WELCOME_CHANNEL_ID = 1388823708298252328  # <-- Wstaw ID kanału powitalnego tutaj
+WELCOME_CHANNEL_ID = 1388823708298252328
 
+# Uprawnienia do komend wg ról
 PERMISSIONS = {
     "mute": [
         1388937017185800375,
@@ -69,9 +71,9 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
+# SQLite setup
 conn = sqlite3.connect('roles.db')
 cursor = conn.cursor()
-
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS muted_roles (
     user_id INTEGER PRIMARY KEY,
@@ -80,21 +82,20 @@ CREATE TABLE IF NOT EXISTS muted_roles (
 ''')
 conn.commit()
 
-def save_roles(user_id, roles):
+def save_roles(user_id: int, roles):
     roles_ids = [role.id for role in roles]
     roles_json = json.dumps(roles_ids)
     cursor.execute('REPLACE INTO muted_roles (user_id, roles) VALUES (?, ?)', (user_id, roles_json))
     conn.commit()
 
-def load_roles(user_id):
+def load_roles(user_id: int):
     cursor.execute('SELECT roles FROM muted_roles WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     if result:
-        roles_ids = json.loads(result[0])
-        return roles_ids
+        return json.loads(result[0])
     return []
 
-def delete_roles(user_id):
+def delete_roles(user_id: int):
     cursor.execute('DELETE FROM muted_roles WHERE user_id = ?', (user_id,))
     conn.commit()
 
@@ -104,7 +105,6 @@ async def on_ready():
     await bot.tree.sync()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="discord.gg/goatyrblx"))
 
-# --- Nowy event powitalny ---
 @bot.event
 async def on_member_join(member: discord.Member):
     guild = member.guild
@@ -114,17 +114,16 @@ async def on_member_join(member: discord.Member):
         return
 
     member_count = guild.member_count
-    account_creation_timestamp = int(member.created_at.timestamp())
     embed = discord.Embed(
         title="`🐻‍❄️` Nowy Członek",
         description=(
             f"👋🏻 Witamy na **🐐GOATY🐐**\n"
             f"👤 Nazwa Użytkownika: **{member}**\n"
-            f"📅 Konto założone: <t:{account_creation_timestamp}:F>\n"
+            f"📅 Konto założone: <t:{int(member.created_at.timestamp())}:F>\n"
             f"⏰ Dołączył/a: <t:{int(member.joined_at.timestamp())}:R>\n"
-            f"👥 Aktualnie jest nas: **{member_count}**\n"
+            f"👥 Aktualnie jest nas: **{member_count}**"
         ),
-        color=discord.Color.from_rgb(255, 255, 255)  # Biały kolor
+        color=discord.Color.from_rgb(255, 255, 255)
     )
     await welcome_channel.send(embed=embed)
 
@@ -142,15 +141,19 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.response.send_message("❌ Nie znaleziono roli Muted!", ephemeral=True)
         return
 
+    # Zapisz poprzednie role (bez @everyone)
     previous_roles = [role for role in user.roles if role != interaction.guild.default_role]
     save_roles(user.id, previous_roles)
+
+    # Przypisz tylko muted_role
     await user.edit(roles=[muted_role], reason=reason)
+
     end_time = datetime.utcnow() + timedelta(minutes=time)
 
     embed = discord.Embed(title="`🔇` Mute", color=discord.Color.red())
     embed.description = (
-        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
-        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
+        f"**Użytkownik:** {user}\n"
+        f"**Moderator:** {interaction.user}\n"
         f"**Powód:** {reason}\n"
         f"**Czas:** {time} minut\n"
         f"**Koniec wyciszenia:** <t:{int(end_time.timestamp())}:F>"
@@ -163,16 +166,16 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await asyncio.sleep(time * 60)
 
-    # Auto unmute
-    roles_ids = load_roles(user.id)
-    roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
+    # Auto unmute po czasie
     try:
+        roles_ids = load_roles(user.id)
+        roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
         await user.edit(roles=roles, reason="Auto unmute")
         delete_roles(user.id)
 
         unmute_embed = discord.Embed(title="`🔊` Unmute (automatyczny)", color=discord.Color.green())
         unmute_embed.description = (
-            f"**Użytkownik:** {user.name}#{user.discriminator}\n"
+            f"**Użytkownik:** {user}\n"
             f"**Moderator:** System\n"
             f"**Powód:** Kara minęła"
         )
@@ -203,8 +206,8 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
 
     embed = discord.Embed(title="`🔊` Unmute", color=discord.Color.green())
     embed.description = (
-        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
-        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
+        f"**Użytkownik:** {user}\n"
+        f"**Moderator:** {interaction.user}"
     )
     if reason:
         embed.description += f"\n**Powód:** {reason}"
@@ -224,8 +227,8 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
     await user.ban(reason=reason)
     embed = discord.Embed(title="`⛔` Ban", color=discord.Color.dark_red())
     embed.description = (
-        f"**Użytkownik:** {user.name}#{user.discriminator}\n"
-        f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}\n"
+        f"**Użytkownik:** {user}\n"
+        f"**Moderator:** {interaction.user}\n"
         f"**Powód:** {reason}"
     )
 
@@ -246,8 +249,8 @@ async def unban(interaction: discord.Interaction, user_id: str):
         await interaction.guild.unban(user)
         embed = discord.Embed(title="`✅` Unban", color=discord.Color.green())
         embed.description = (
-            f"**Użytkownik:** {user.name}#{user.discriminator}\n"
-            f"**Moderator:** {interaction.user.name}#{interaction.user.discriminator}"
+            f"**Użytkownik:** {user}\n"
+            f"**Moderator:** {interaction.user}"
         )
 
         await interaction.response.send_message(f"{user.name} został odbanowany.", ephemeral=True)
@@ -257,7 +260,7 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd: {e}", ephemeral=True)
 
-# === Uruchomienie Flask i bota ===
+# === Start Flask i bota ===
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(get_token())
