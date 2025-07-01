@@ -25,11 +25,12 @@ def get_token():
     return os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
-intents.members = True
+intents.members = True  # Potrzebne, aby działał on_member_join
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 MUTED_ROLE_ID = 1389325433161646241
 LOG_CHANNEL_ID = 1388833060933337129
+WELCOME_CHANNEL_ID = 123456789012345678  # <-- Wstaw ID kanału powitalnego tutaj
 
 PERMISSIONS = {
     "mute": [
@@ -101,8 +102,33 @@ def delete_roles(user_id):
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
     await bot.tree.sync()
-    # Custom presence
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="discord.gg/goatyrblx"))
+
+# --- Nowy event powitalny ---
+@bot.event
+async def on_member_join(member: discord.Member):
+    guild = member.guild
+    welcome_channel = guild.get_channel(WELCOME_CHANNEL_ID)
+    if not welcome_channel:
+        print(f"❌ Nie znaleziono kanału powitalnego o ID {WELCOME_CHANNEL_ID}")
+        return
+
+    member_count = guild.member_count
+    account_creation_timestamp = int(member.created_at.timestamp())
+    embed = discord.Embed(
+        title="`🐻‍❄️` Nowy Członek",
+        description=(
+            f"👋🏻 Witamy na **🐐GOATY🐐**\n"
+            f"👤 Nazwa Użytkownika: **{member}**\n"
+            f"📅 Konto założone: <t:{account_creation_timestamp}:F>\n"
+            f"⏰ Dołączył/a: <t:{int(member.joined_at.timestamp())}:R>\n"
+            f"👥 Aktualnie jest nas: **{member_count}**\n"
+        ),
+        color=discord.Color.from_rgb(255, 255, 255)  # Biały kolor
+    )
+    await welcome_channel.send(embed=embed)
+
+# --- Komendy slash ---
 
 @bot.tree.command(name="mute", description="Wycisza użytkownika na czas (w minutach)")
 @app_commands.describe(user="Kogo wyciszyć", reason="Powód", time="Czas wyciszenia (minuty)")
