@@ -131,7 +131,7 @@ def count_warnings(user_id: int) -> int:
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
     await bot.tree.sync()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="discord.gg/goatyrblx"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="mlody sigma wbij na dysmuzgi muzgu xd"))
 
 @bot.tree.command(name="mute", description="Wycisza uzytkownika na czas (w minutach)")
 @app_commands.describe(user="Kogo wyciszyc", reason="Powod", time="Czas wyciszenia (minuty)")
