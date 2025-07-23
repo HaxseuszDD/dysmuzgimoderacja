@@ -196,16 +196,6 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     except discord.Forbidden:
         pass
 
-    # Log na kanale logów
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        embed_log = discord.Embed(title="🔇 Użytkownik wyciszony", color=discord.Color.red())
-        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
-        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-        embed_log.add_field(name="Powód", value=reason, inline=False)
-        embed_log.add_field(name="Czas trwania", value=f"{time} minut", inline=False)
-        await log_channel.send(embed=embed_log)
-
     await interaction.response.send_message(f"✅ {user.display_name} został wyciszony na {time} minut.", ephemeral=True)
 
     await asyncio.sleep(time * 60)
@@ -225,12 +215,6 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
                 await user.send(embed=embed_dm_unmute)
             except discord.Forbidden:
                 pass
-
-            # Log odciszenia na kanale
-            if log_channel:
-                embed_log_unmute = discord.Embed(title="🔊 Użytkownik odciszony", color=discord.Color.green())
-                embed_log_unmute.add_field(name="Użytkownik", value=str(user), inline=False)
-                await log_channel.send(embed=embed_log_unmute)
     except Exception as e:
         print(f"❌ Błąd przy przywracaniu ról po wyciszeniu: {e}")
 
@@ -261,16 +245,6 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
     except discord.Forbidden:
         pass
 
-    # Log na kanale
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        embed_log = discord.Embed(title="🔊 Użytkownik odciszony", color=discord.Color.green())
-        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
-        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-        if reason:
-            embed_log.add_field(name="Powód", value=reason, inline=False)
-        await log_channel.send(embed=embed_log)
-
     await interaction.response.send_message(f"✅ {user.display_name} został odciszony.", ephemeral=True)
 
 @bot.tree.command(name="ban", description="Zbanuj użytkownika")
@@ -291,15 +265,6 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
             await user.send(embed=embed_dm)
         except discord.Forbidden:
             pass
-
-        # Log na kanale
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed_log = discord.Embed(title="⛔ Użytkownik zbanowany", color=discord.Color.red())
-            embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
-            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-            embed_log.add_field(name="Powód", value=reason, inline=False)
-            await log_channel.send(embed=embed_log)
 
         await interaction.response.send_message(f"✅ {user.display_name} został zbanowany.", ephemeral=True)
     except Exception as e:
@@ -324,16 +289,6 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         await user.send(embed=embed_dm)
     except discord.Forbidden:
         pass
-
-    # Log na kanale
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        embed_log = discord.Embed(title="⚠️ Ostrzeżenie dodane", color=discord.Color.orange())
-        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
-        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-        embed_log.add_field(name="Powód", value=reason, inline=False)
-        embed_log.add_field(name="Liczba ostrzeżeń", value=str(warnings_count), inline=False)
-        await log_channel.send(embed=embed_log)
 
     await interaction.response.send_message(f"✅ Dodano ostrzeżenie użytkownikowi {user.display_name}.", ephemeral=True)
 
@@ -363,15 +318,6 @@ async def auto_ban(guild: discord.Guild, user: discord.Member, moderator: discor
         except discord.Forbidden:
             pass
 
-        # Log na kanale
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed_log = discord.Embed(title="⛔ Automatyczny ban", color=discord.Color.red())
-            embed_log.add_field(name="Moderator", value=str(moderator), inline=False)
-            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-            embed_log.add_field(name="Powód", value=reason, inline=False)
-            embed_log.add_field(name="Czas trwania", value=f"{days} dni" if days > 0 else "Na zawsze", inline=False)
-            await log_channel.send(embed=embed_log)
     except Exception as e:
         print(f"❌ Błąd przy automatycznym banie: {e}")
 
@@ -394,18 +340,10 @@ async def kick(interaction: discord.Interaction, user: discord.Member, reason: s
         except discord.Forbidden:
             pass
 
-        # Log na kanale
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed_log = discord.Embed(title="🚪 Użytkownik wyrzucony", color=discord.Color.orange())
-            embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
-            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
-            embed_log.add_field(name="Powód", value=reason, inline=False)
-            await log_channel.send(embed=embed_log)
-
         await interaction.response.send_message(f"✅ {user.display_name} został wyrzucony.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd podczas wyrzucania: {e}", ephemeral=True)
+
 
 # --- Uruchomienie bota i Flask ---
 if __name__ == "__main__":
