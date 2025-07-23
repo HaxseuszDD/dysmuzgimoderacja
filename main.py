@@ -34,7 +34,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 MUTED_ROLE_ID = 1396541521003675718
 LOG_CHANNEL_ID = 1396875096882417836
 
-# Role, które mają dostęp do komend wg uprawnień
 PERMISSIONS = {
     "warn": [1393370941811064972, 1393370832071426230, 1393370749661614080,
              1393370358408544328, 1393370252519145493, 1393370458740490351,
@@ -151,7 +150,7 @@ async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
     except Exception as e:
         print(f"❌ Błąd przy automatycznym odbanowaniu użytkownika {user_id}: {e}")
 
-# --- Eventy ---
+# --- Event on_ready ---
 @bot.event
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
@@ -187,6 +186,7 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.response.send_message(f"❌ Błąd przy wyciszaniu: {e}", ephemeral=True)
         return
 
+    # Embed do DM
     embed_dm = discord.Embed(title="🔇 Wyciszenie", color=discord.Color.red())
     embed_dm.add_field(name="Moderator", value=str(interaction.user), inline=False)
     embed_dm.add_field(name="Powód", value=reason, inline=False)
@@ -196,16 +196,41 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     except discord.Forbidden:
         pass
 
+    # Log na kanale logów
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        embed_log = discord.Embed(title="🔇 Użytkownik wyciszony", color=discord.Color.red())
+        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
+        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+        embed_log.add_field(name="Powód", value=reason, inline=False)
+        embed_log.add_field(name="Czas trwania", value=f"{time} minut", inline=False)
+        await log_channel.send(embed=embed_log)
+
     await interaction.response.send_message(f"✅ {user.display_name} został wyciszony na {time} minut.", ephemeral=True)
 
     await asyncio.sleep(time * 60)
 
+    # Po czasie przywróć role
     try:
         roles_ids = load_roles(user.id)
         roles_to_restore = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
         if roles_to_restore:
             await user.edit(roles=roles_to_restore, reason="Automatyczne odciszenie")
             delete_roles(user.id)
+
+            # DM o odciszeniu
+            embed_dm_unmute = discord.Embed(title="🔊 Odciszenie", color=discord.Color.green())
+            embed_dm_unmute.add_field(name="Informacja", value="Twoje wyciszenie dobiegło końca.", inline=False)
+            try:
+                await user.send(embed=embed_dm_unmute)
+            except discord.Forbidden:
+                pass
+
+            # Log odciszenia na kanale
+            if log_channel:
+                embed_log_unmute = discord.Embed(title="🔊 Użytkownik odciszony", color=discord.Color.green())
+                embed_log_unmute.add_field(name="Użytkownik", value=str(user), inline=False)
+                await log_channel.send(embed=embed_log_unmute)
     except Exception as e:
         print(f"❌ Błąd przy przywracaniu ról po wyciszeniu: {e}")
 
@@ -226,6 +251,7 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
         await user.edit(roles=roles_to_restore, reason="Ręczne odciszenie")
         delete_roles(user.id)
 
+    # DM do użytkownika
     embed_dm = discord.Embed(title="🔊 Odciszenie", color=discord.Color.green())
     embed_dm.add_field(name="Moderator", value=str(interaction.user), inline=False)
     if reason:
@@ -234,6 +260,16 @@ async def unmute(interaction: discord.Interaction, user: discord.Member, reason:
         await user.send(embed=embed_dm)
     except discord.Forbidden:
         pass
+
+    # Log na kanale
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        embed_log = discord.Embed(title="🔊 Użytkownik odciszony", color=discord.Color.green())
+        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
+        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+        if reason:
+            embed_log.add_field(name="Powód", value=reason, inline=False)
+        await log_channel.send(embed=embed_log)
 
     await interaction.response.send_message(f"✅ {user.display_name} został odciszony.", ephemeral=True)
 
@@ -246,11 +282,100 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
 
     try:
         await user.ban(reason=reason)
+
+        # DM do użytkownika
+        embed_dm = discord.Embed(title="⛔ Ban", color=discord.Color.red())
+        embed_dm.add_field(name="Moderator", value=str(interaction.user), inline=False)
+        embed_dm.add_field(name="Powód", value=reason, inline=False)
+        try:
+            await user.send(embed=embed_dm)
+        except discord.Forbidden:
+            pass
+
+        # Log na kanale
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed_log = discord.Embed(title="⛔ Użytkownik zbanowany", color=discord.Color.red())
+            embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
+            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+            embed_log.add_field(name="Powód", value=reason, inline=False)
+            await log_channel.send(embed=embed_log)
+
         await interaction.response.send_message(f"✅ {user.display_name} został zbanowany.", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ Błąd przy banowaniu: {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Błąd podczas banowania: {e}", ephemeral=True)
 
-@bot.tree.command(name="kick", description="Wyrzuć użytkownika z serwera")
+@bot.tree.command(name="warn", description="Dodaj ostrzeżenie (warn) użytkownikowi")
+@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if not has_permission(interaction, "warn"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do tej komendy.", ephemeral=True)
+        return
+
+    add_warning(user.id, interaction.user.id, reason)
+    warnings_count = count_warnings(user.id)
+
+    # DM do użytkownika
+    embed_dm = discord.Embed(title="⚠️ Ostrzeżenie", color=discord.Color.orange())
+    embed_dm.add_field(name="Moderator", value=str(interaction.user), inline=False)
+    embed_dm.add_field(name="Powód", value=reason, inline=False)
+    embed_dm.add_field(name="Liczba ostrzeżeń", value=str(warnings_count), inline=False)
+    try:
+        await user.send(embed=embed_dm)
+    except discord.Forbidden:
+        pass
+
+    # Log na kanale
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        embed_log = discord.Embed(title="⚠️ Ostrzeżenie dodane", color=discord.Color.orange())
+        embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
+        embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+        embed_log.add_field(name="Powód", value=reason, inline=False)
+        embed_log.add_field(name="Liczba ostrzeżeń", value=str(warnings_count), inline=False)
+        await log_channel.send(embed=embed_log)
+
+    await interaction.response.send_message(f"✅ Dodano ostrzeżenie użytkownikowi {user.display_name}.", ephemeral=True)
+
+    # Automatyczne bany na podstawie liczby warnów
+    if warnings_count == 5:
+        await auto_ban(interaction.guild, user, interaction.user, 3, "5 warnów - ban na 3 dni")
+    elif warnings_count == 10:
+        await auto_ban(interaction.guild, user, interaction.user, 7, "10 warnów - ban na 7 dni")
+    elif warnings_count == 20:
+        await auto_ban(interaction.guild, user, interaction.user, 0, "20 warnów - ban na zawsze")
+
+async def auto_ban(guild: discord.Guild, user: discord.Member, moderator: discord.Member, days: int, reason: str):
+    try:
+        await user.ban(reason=reason)
+        if days > 0:
+            unban_time = datetime.utcnow() + timedelta(days=days)
+            save_temp_ban(user.id, unban_time)
+            asyncio.create_task(schedule_unban(user.id, guild.id, unban_time))
+
+        # DM do użytkownika
+        embed_dm = discord.Embed(title="⛔ Automatyczny ban", color=discord.Color.red())
+        embed_dm.add_field(name="Moderator", value=str(moderator), inline=False)
+        embed_dm.add_field(name="Powód", value=reason, inline=False)
+        embed_dm.add_field(name="Czas trwania", value=f"{days} dni" if days > 0 else "Na zawsze", inline=False)
+        try:
+            await user.send(embed=embed_dm)
+        except discord.Forbidden:
+            pass
+
+        # Log na kanale
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed_log = discord.Embed(title="⛔ Automatyczny ban", color=discord.Color.red())
+            embed_log.add_field(name="Moderator", value=str(moderator), inline=False)
+            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+            embed_log.add_field(name="Powód", value=reason, inline=False)
+            embed_log.add_field(name="Czas trwania", value=f"{days} dni" if days > 0 else "Na zawsze", inline=False)
+            await log_channel.send(embed=embed_log)
+    except Exception as e:
+        print(f"❌ Błąd przy automatycznym banie: {e}")
+
+@bot.tree.command(name="kick", description="Wyrzuć użytkownika")
 @app_commands.describe(user="Użytkownik do wyrzucenia", reason="Powód")
 async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "Brak powodu"):
     if not has_permission(interaction, "kick"):
@@ -259,68 +384,30 @@ async def kick(interaction: discord.Interaction, user: discord.Member, reason: s
 
     try:
         await user.kick(reason=reason)
-        await interaction.response.send_message(f"✅ {user.display_name} został wyrzucony z serwera.", ephemeral=True)
+
+        # DM do użytkownika
+        embed_dm = discord.Embed(title="🚪 Wyrzucenie", color=discord.Color.orange())
+        embed_dm.add_field(name="Moderator", value=str(interaction.user), inline=False)
+        embed_dm.add_field(name="Powód", value=reason, inline=False)
+        try:
+            await user.send(embed=embed_dm)
+        except discord.Forbidden:
+            pass
+
+        # Log na kanale
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed_log = discord.Embed(title="🚪 Użytkownik wyrzucony", color=discord.Color.orange())
+            embed_log.add_field(name="Moderator", value=str(interaction.user), inline=False)
+            embed_log.add_field(name="Użytkownik", value=str(user), inline=False)
+            embed_log.add_field(name="Powód", value=reason, inline=False)
+            await log_channel.send(embed=embed_log)
+
+        await interaction.response.send_message(f"✅ {user.display_name} został wyrzucony.", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ Błąd przy wyrzucaniu: {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Błąd podczas wyrzucania: {e}", ephemeral=True)
 
-@bot.tree.command(name="warn", description="Ostrzeż użytkownika")
-@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód")
-async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
-    if not has_permission(interaction, "warn"):
-        await interaction.response.send_message("❌ Nie masz uprawnień do tej komendy.", ephemeral=True)
-        return
-
-    add_warning(user.id, interaction.user.id, reason)
-    warn_count = count_warnings(user.id)
-
-    embed_warn = discord.Embed(title="⚠️ Ostrzeżenie", color=discord.Color.orange())
-    embed_warn.add_field(name="Moderator", value=str(interaction.user), inline=False)
-    embed_warn.add_field(name="Użytkownik", value=str(user), inline=False)
-    embed_warn.add_field(name="Powód", value=reason, inline=False)
-    embed_warn.add_field(name="Liczba ostrzeżeń", value=str(warn_count), inline=False)
-
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(embed=embed_warn)
-
-    await interaction.response.send_message(f"✅ {user.display_name} został ostrzeżony. Łącznie ostrzeżeń: {warn_count}", ephemeral=True)
-
-    try:
-        guild = interaction.guild
-        if warn_count == 5:
-            unban_time = datetime.utcnow() + timedelta(days=3)
-            await guild.ban(user, reason="Automatyczny ban - 5 ostrzeżeń")
-            save_temp_ban(user.id, unban_time)
-            asyncio.create_task(schedule_unban(user.id, guild.id, unban_time))
-            await interaction.followup.send(f"⚠️ {user.display_name} został zbanowany na 3 dni za 5 ostrzeżeń.", ephemeral=True)
-        elif warn_count == 10:
-            unban_time = datetime.utcnow() + timedelta(days=7)
-            await guild.ban(user, reason="Automatyczny ban - 10 ostrzeżeń")
-            save_temp_ban(user.id, unban_time)
-            asyncio.create_task(schedule_unban(user.id, guild.id, unban_time))
-            await interaction.followup.send(f"⚠️ {user.display_name} został zbanowany na 7 dni za 10 ostrzeżeń.", ephemeral=True)
-        elif warn_count >= 20:
-            await guild.ban(user, reason="Automatyczny ban permanentny - 20 ostrzeżeń")
-            clear_warnings(user.id)  # wyczysc ostrzezenia po banie permanentnym
-            await interaction.followup.send(f"⛔ {user.display_name} został zbanowany permanentnie za 20 ostrzeżeń.", ephemeral=True)
-    except Exception as e:
-        print(f"❌ Błąd przy automatycznym banowaniu: {e}")
-
-@bot.tree.command(name="clearwarnsall", description="Wyczyszcz wszystkie ostrzeżenia (tylko dla właściciela)")
-async def clearwarnsall(interaction: discord.Interaction):
-    owner_id = 1283123203748925493
-    if interaction.user.id != owner_id:
-        await interaction.response.send_message("❌ Nie masz uprawnień do tej komendy.", ephemeral=True)
-        return
-
-    try:
-        cursor.execute('DELETE FROM warnings')
-        conn.commit()
-        await interaction.response.send_message("✅ Wszystkie ostrzeżenia zostały wyczyszczone.", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Wystąpił błąd przy czyszczeniu ostrzeżeń: {e}", ephemeral=True)
-
-# --- Uruchomienie ---
+# --- Uruchomienie bota i Flask ---
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(get_token())
