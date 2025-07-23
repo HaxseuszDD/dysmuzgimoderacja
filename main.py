@@ -311,7 +311,13 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
     except discord.Forbidden:
         pass
 
-    await interaction.response.send_message(f"{user.name} został ostrzeżony. Łączna liczba ostrzeżeń: {warn_count}", ephemeral=True)
+    await interaction.response.send_message(
+        f"{user.name} został ostrzeżony. Łączna liczba ostrzeżeń: {warn_count}",
+        ephemeral=True
+    )
+
+    # 👇 To jest kluczowe — automatyczne banowanie
+    await check_and_apply_ban(interaction.guild, user, warn_count, interaction.user)
 
     # Sprawdź czy należy automatycznie zbanować
 async def apply_temp_ban(guild, user, moderator, days, reason):
