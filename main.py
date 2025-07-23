@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import asyncio
 from datetime import datetime, timedelta
@@ -141,11 +141,13 @@ async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
 
     guild = bot.get_guild(guild_id)
     if not guild:
+        print(f"❌ Nie znaleziono gildii o ID {guild_id} przy odbanowywaniu {user_id}")
         return
     try:
         user = await bot.fetch_user(user_id)
         await guild.unban(user, reason="Automatyczne odbanowanie po wygaśnięciu bana")
         remove_temp_ban(user_id)
+        print(f"✅ Automatycznie odbanowano użytkownika {user_id}")
     except Exception as e:
         print(f"❌ Błąd przy automatycznym odbanowaniu użytkownika {user_id}: {e}")
 
@@ -160,9 +162,8 @@ async def on_ready():
     # Przywracanie zaplanowanych odbanowań
     for user_id, unban_time_str in get_all_temp_bans():
         unban_time = datetime.fromisoformat(unban_time_str)
-        if bot.guilds:
-            guild_id = bot.guilds[0].id
-            asyncio.create_task(schedule_unban(user_id, guild_id, unban_time))
+        for guild in bot.guilds:
+            asyncio.create_task(schedule_unban(user_id, guild.id, unban_time))
 
 # --- Commands ---
 
@@ -308,7 +309,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         print(f"❌ Błąd przy automatycznym banowaniu: {e}")
 
 # --- Run Flask in a thread ---
-threading.Thread(target=run_flask).start()
+threading.Thread(target=run_flask, daemon=True).start()
 
 # --- Run bot ---
 bot.run(get_token())
