@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import sqlite3
 import json
@@ -64,11 +64,14 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS warnings (
     reason TEXT,
     timestamp TEXT
 )''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS temp_bans (
+    user_id INTEGER PRIMARY KEY,
+    unban_time TEXT
+)''')
 conn.commit()
 
 def save_roles(user_id: int, roles):
     roles_ids = [role.id for role in roles]
-    print(f"Zapisuję role dla {user_id}: {roles_ids}")
     roles_json = json.dumps(roles_ids)
     cursor.execute('REPLACE INTO muted_roles (user_id, roles) VALUES (?, ?)', (user_id, roles_json))
     conn.commit()
@@ -76,10 +79,7 @@ def save_roles(user_id: int, roles):
 def load_roles(user_id: int):
     cursor.execute('SELECT roles FROM muted_roles WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
-    if result:
-        print(f"Wczytuję role dla {user_id}: {result[0]}")
-        return json.loads(result[0])
-    return []
+    return json.loads(result[0]) if result else []
 
 def delete_roles(user_id: int):
     cursor.execute('DELETE FROM muted_roles WHERE user_id = ?', (user_id,))
@@ -96,11 +96,33 @@ def count_warnings(user_id: int) -> int:
     result = cursor.fetchone()
     return result[0] if result else 0
 
+async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
+    now = datetime.utcnow()
+    delay = (unban_time - now).total_seconds()
+    if delay > 0:
+        await asyncio.sleep(delay)
+    try:
+        guild = bot.get_guild(guild_id)
+        if guild:
+            user = await bot.fetch_user(user_id)
+            await guild.unban(user, reason="Automatyczne odbanowanie")
+            cursor.execute("DELETE FROM temp_bans WHERE user_id = ?", (user_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"❌ Błąd przy automatycznym odbanowaniu: {e}")
+
 @bot.event
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
     await bot.tree.sync()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="mlody sigma wbij na dysmuzgi muzgu xd"))
+
+    # Przywracanie zaplanowanych odbanowań
+    cursor.execute("SELECT user_id, unban_time FROM temp_bans")
+    rows = cursor.fetchall()
+    for user_id, unban_time_str in rows:
+        unban_time = datetime.fromisoformat(unban_time_str)
+        asyncio.create_task(schedule_unban(user_id, guild_id=bot.guilds[0].id, unban_time=unban_time))
 
 @bot.tree.command(name="mute", description="Wycisz użytkownika na określony czas (w minutach)")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód", time="Czas trwania w minutach")
@@ -136,7 +158,6 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
     try:
         roles_ids = load_roles(user.id)
         roles = [interaction.guild.get_role(rid) for rid in roles_ids if interaction.guild.get_role(rid)]
-        print(f"Przywracam role: {roles}")
         if roles:
             await user.edit(roles=roles, reason="Automatyczne odciszenie")
             delete_roles(user.id)
@@ -225,13 +246,38 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await interaction.response.send_message(f"{user.name} został ostrzeżony. Łączna liczba ostrzeżeń: {warn_count}", ephemeral=True)
 
+    if warn_count == 5:
+        duration = 3 * 24 * 60 * 60
+    elif warn_count == 10:
+        duration = 7 * 24 * 60 * 60
+    elif warn_count >= 20:
+        duration = None
+    else:
+        return
+
+    try:
+        await user.send(embed=discord.Embed(title="⛔ Ban automatyczny", color=discord.Color.red())
+                        .add_field(name="Powód", value=f"Przekroczona liczba ostrzeżeń: {warn_count}", inline=False)
+                        .add_field(name="Czas trwania", value="Na zawsze" if duration is None else f"{duration // 86400} dni", inline=False))
+    except discord.Forbidden:
+        pass
+
+    await user.ban(reason=f"Automatyczny ban za {warn_count} ostrzeżeń")
+
+    if duration:
+        unban_time = datetime.utcnow() + timedelta(seconds=duration)
+        cursor.execute("REPLACE INTO temp_bans (user_id, unban_time) VALUES (?, ?)",
+                       (user.id, unban_time.isoformat()))
+        conn.commit()
+        asyncio.create_task(schedule_unban(user.id, interaction.guild.id, unban_time))
+
 @bot.event
 async def on_message_delete(message):
     if message.author.bot:
         return
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if channel:
-        embed = discord.Embed(title=":wastebasket: Usunięto wiadomość", color=discord.Color.red(), timestamp=datetime.utcnow())
+        embed = discord.Embed(title="🗑️ Usunięto wiadomość", color=discord.Color.red(), timestamp=datetime.utcnow())
         embed.add_field(name="Autor", value=f"{message.author} ({message.author.id})", inline=False)
         embed.add_field(name="Kanał", value=message.channel.mention, inline=False)
         embed.add_field(name="Treść", value=message.content or "*Brak treści (np. obraz)*", inline=False)
@@ -243,7 +289,7 @@ async def on_message_edit(before, after):
         return
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if channel:
-        embed = discord.Embed(title=":pencil: Edytowano wiadomość", color=discord.Color.blue(), timestamp=datetime.utcnow())
+        embed = discord.Embed(title="✏️ Edytowano wiadomość", color=discord.Color.blue(), timestamp=datetime.utcnow())
         embed.add_field(name="Autor", value=f"{before.author} ({before.author.id})", inline=False)
         embed.add_field(name="Kanał", value=before.channel.mention, inline=False)
         embed.add_field(name="Przed", value=before.content or "*Brak treści*", inline=False)
