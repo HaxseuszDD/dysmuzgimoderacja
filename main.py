@@ -9,7 +9,7 @@ import json
 import threading
 from flask import Flask
 
-# --- Flask app ---
+# --- Flask app (keep alive dla hostingów typu Heroku) ---
 app = Flask(__name__)
 
 @app.route("/")
@@ -30,11 +30,11 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- Stałe (ID) ---
+# --- Stałe (ID roli i kanału logów) ---
 MUTED_ROLE_ID = 1396541521003675718
 LOG_CHANNEL_ID = 1396875096882417836
-TEST_GUILD_ID = 1393349551938732032  # Twój serwer testowy
 
+# Role, które mają dostęp do komend wg uprawnień
 PERMISSIONS = {
     "warn": [1393370941811064972, 1393370832071426230, 1393370749661614080,
              1393370358408544328, 1393370252519145493, 1393370458740490351,
@@ -55,7 +55,7 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
-# --- SQLite connection ---
+# --- SQLite baza danych ---
 conn = sqlite3.connect('roles.db', check_same_thread=False)
 cursor = conn.cursor()
 
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS temp_bans (
 
 conn.commit()
 
-# --- Database helper functions ---
+# --- Funkcje bazy danych ---
 def save_roles(user_id: int, roles):
     roles_ids = [role.id for role in roles]
     roles_json = json.dumps(roles_ids)
@@ -132,7 +132,7 @@ def get_all_temp_bans():
     cursor.execute('SELECT user_id, unban_time FROM temp_bans')
     return cursor.fetchall()
 
-# --- Ban unban scheduler ---
+# --- Scheduler do automatycznego odbanowania ---
 async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
     now = datetime.utcnow()
     delay = (unban_time - now).total_seconds()
@@ -151,21 +151,20 @@ async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
     except Exception as e:
         print(f"❌ Błąd przy automatycznym odbanowaniu użytkownika {user_id}: {e}")
 
-# --- Events ---
+# --- Eventy ---
 @bot.event
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
-    guild = discord.Object(id=TEST_GUILD_ID)
-    await bot.tree.sync(guild=guild)  # synchronizacja tylko na serwerze testowym
+    await bot.tree.sync()
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="mlody sigma wbij na dysmuzgi muzgu xd"))
 
-    # Przywracanie zaplanowanych odbanowań
+    # Przywróć schedulowane odbanowania
     for user_id, unban_time_str in get_all_temp_bans():
         unban_time = datetime.fromisoformat(unban_time_str)
         for guild in bot.guilds:
             asyncio.create_task(schedule_unban(user_id, guild.id, unban_time))
 
-# --- Commands ---
+# --- Komendy ---
 
 @bot.tree.command(name="mute", description="Wycisz użytkownika na określony czas (w minutach)")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód wyciszenia", time="Czas trwania w minutach")
@@ -286,7 +285,6 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
 
     await interaction.response.send_message(f"✅ {user.display_name} został ostrzeżony. Łącznie ostrzeżeń: {warn_count}", ephemeral=True)
 
-    # Automatyczne bany na podstawie ilości ostrzeżeń
     try:
         guild = interaction.guild
         if warn_count == 5:
@@ -303,13 +301,26 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
             await interaction.followup.send(f"⚠️ {user.display_name} został zbanowany na 7 dni za 10 ostrzeżeń.", ephemeral=True)
         elif warn_count >= 20:
             await guild.ban(user, reason="Automatyczny ban permanentny - 20 ostrzeżeń")
-            clear_warnings(user.id)
-            await interaction.followup.send(f"⚠️ {user.display_name} został zbanowany permanentnie za 20 ostrzeżeń.", ephemeral=True)
+            clear_warnings(user.id)  # wyczysc ostrzezenia po banie permanentnym
+            await interaction.followup.send(f"⛔ {user.display_name} został zbanowany permanentnie za 20 ostrzeżeń.", ephemeral=True)
     except Exception as e:
         print(f"❌ Błąd przy automatycznym banowaniu: {e}")
 
-# --- Run Flask in a thread ---
-threading.Thread(target=run_flask, daemon=True).start()
+@bot.tree.command(name="clearwarnsall", description="Wyczyszcz wszystkie ostrzeżenia (tylko dla właściciela)")
+async def clearwarnsall(interaction: discord.Interaction):
+    owner_id = 1283123203748925493
+    if interaction.user.id != owner_id:
+        await interaction.response.send_message("❌ Nie masz uprawnień do tej komendy.", ephemeral=True)
+        return
 
-# --- Run bot ---
-bot.run(get_token())
+    try:
+        cursor.execute('DELETE FROM warnings')
+        conn.commit()
+        await interaction.response.send_message("✅ Wszystkie ostrzeżenia zostały wyczyszczone.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Wystąpił błąd przy czyszczeniu ostrzeżeń: {e}", ephemeral=True)
+
+# --- Uruchomienie ---
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
+    bot.run(get_token())
