@@ -36,17 +36,17 @@ LOG_CHANNEL_ID = 1396875096882417836
 
 PERMISSIONS = {
     "warn": [1393370941811064972, 1393370832071426230, 1393370749661614080,
-              1393370358408544328, 1393370252519145493, 1393370458740490351,
-              1393370125083607174, 1393369936537194619, 1396460188298641418,
-              1393368165567692911],
+             1393370358408544328, 1393370252519145493, 1393370458740490351,
+             1393370125083607174, 1393369936537194619, 1396460188298641418,
+             1393368165567692911],
     "mute": [1393370749661614080, 1393370358408544328, 1393370252519145493,
-              1393370458740490351, 1393370125083607174, 1393369936537194619,
-              1396460188298641418, 1393368165567692911],
+             1393370458740490351, 1393370125083607174, 1393369936537194619,
+             1396460188298641418, 1393368165567692911],
     "kick": [1393370358408544328, 1393370252519145493, 1393370458740490351,
-              1393370125083607174, 1393369936537194619, 1396460188298641418,
-              1393368165567692911],
+             1393370125083607174, 1393369936537194619, 1396460188298641418,
+             1393368165567692911],
     "ban":  [1393370458740490351, 1393370125083607174, 1393369936537194619,
-              1396460188298641418, 1393368165567692911]
+             1396460188298641418, 1393368165567692911]
 }
 
 def has_permission(interaction: discord.Interaction, command: str) -> bool:
@@ -54,6 +54,7 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
+# Połączenie do bazy danych
 conn = sqlite3.connect('roles.db')
 cursor = conn.cursor()
 cursor.execute('''CREATE TABLE IF NOT EXISTS muted_roles (user_id INTEGER PRIMARY KEY, roles TEXT)''')
@@ -70,6 +71,7 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS temp_bans (
 )''')
 conn.commit()
 
+# Funkcje obsługujące bazę
 def save_roles(user_id: int, roles):
     roles_ids = [role.id for role in roles]
     roles_json = json.dumps(roles_ids)
@@ -95,6 +97,10 @@ def count_warnings(user_id: int) -> int:
     cursor.execute('SELECT COUNT(*) FROM warnings WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     return result[0] if result else 0
+
+def clear_warnings(user_id: int):
+    cursor.execute('DELETE FROM warnings WHERE user_id = ?', (user_id,))
+    conn.commit()
 
 async def schedule_unban(user_id: int, guild_id: int, unban_time: datetime):
     now = datetime.utcnow()
@@ -123,6 +129,8 @@ async def on_ready():
     for user_id, unban_time_str in rows:
         unban_time = datetime.fromisoformat(unban_time_str)
         asyncio.create_task(schedule_unban(user_id, guild_id=bot.guilds[0].id, unban_time=unban_time))
+
+# Komendy
 
 @bot.tree.command(name="mute", description="Wycisz użytkownika na określony czas (w minutach)")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód", time="Czas trwania w minutach")
@@ -271,6 +279,18 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         conn.commit()
         asyncio.create_task(schedule_unban(user.id, interaction.guild.id, unban_time))
 
+@bot.tree.command(name="clearwarns", description="Wyczyść wszystkie ostrzeżenia użytkownika")
+@app_commands.describe(user="Użytkownik, którego warny chcesz wyczyścić")
+async def clearwarns(interaction: discord.Interaction, user: discord.Member):
+    if not has_permission(interaction, "warn"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do czyszczenia ostrzeżeń.", ephemeral=True)
+        return
+
+    clear_warnings(user.id)
+    await interaction.response.send_message(f"Wyczyszczono wszystkie ostrzeżenia użytkownika {user.name}.", ephemeral=True)
+
+# Logi usunięć i edycji wiadomości
+
 @bot.event
 async def on_message_delete(message):
     if message.author.bot:
@@ -295,6 +315,8 @@ async def on_message_edit(before, after):
         embed.add_field(name="Przed", value=before.content or "*Brak treści*", inline=False)
         embed.add_field(name="Po", value=after.content or "*Brak treści*", inline=False)
         await channel.send(embed=embed)
+
+# Start
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
