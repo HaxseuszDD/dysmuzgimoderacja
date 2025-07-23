@@ -279,9 +279,9 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         conn.commit()
         asyncio.create_task(schedule_unban(user.id, interaction.guild.id, unban_time))
 
-@bot.tree.command(name="clearwarns", description="Wyczyść wszystkie ostrzeżenia użytkownika")
+@bot.tree.command(name="clearwarnsall", description="Wyczyść wszystkie ostrzeżenia użytkownika")
 @app_commands.describe(user="Użytkownik, którego warny chcesz wyczyścić")
-async def clearwarns(interaction: discord.Interaction, user: discord.Member):
+async def clearwarnsall(interaction: discord.Interaction, user: discord.Member):
     if not has_permission(interaction, "warn"):
         await interaction.response.send_message("❌ Nie masz uprawnień do czyszczenia ostrzeżeń.", ephemeral=True)
         return
@@ -300,23 +300,23 @@ async def on_message_delete(message):
         embed = discord.Embed(title="🗑️ Usunięto wiadomość", color=discord.Color.red(), timestamp=datetime.utcnow())
         embed.add_field(name="Autor", value=f"{message.author} ({message.author.id})", inline=False)
         embed.add_field(name="Kanał", value=message.channel.mention, inline=False)
-        embed.add_field(name="Treść", value=message.content or "*Brak treści (np. obraz)*", inline=False)
+        embed.add_field(name="Treść", value=message.content or "Brak treści", inline=False)
         await channel.send(embed=embed)
 
 @bot.event
 async def on_message_edit(before, after):
-    if before.author.bot or before.content == after.content:
+    if before.author.bot:
         return
     channel = bot.get_channel(LOG_CHANNEL_ID)
     if channel:
-        embed = discord.Embed(title="✏️ Edytowano wiadomość", color=discord.Color.blue(), timestamp=datetime.utcnow())
+        embed = discord.Embed(title="✏️ Edytowano wiadomość", color=discord.Color.orange(), timestamp=datetime.utcnow())
         embed.add_field(name="Autor", value=f"{before.author} ({before.author.id})", inline=False)
         embed.add_field(name="Kanał", value=before.channel.mention, inline=False)
-        embed.add_field(name="Przed", value=before.content or "*Brak treści*", inline=False)
-        embed.add_field(name="Po", value=after.content or "*Brak treści*", inline=False)
+        embed.add_field(name="Przed", value=before.content or "Brak treści", inline=False)
+        embed.add_field(name="Po", value=after.content or "Brak treści", inline=False)
         await channel.send(embed=embed)
 
-# Start
+# Uruchomienie Flask i bota
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
