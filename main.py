@@ -344,6 +344,18 @@ async def kick(interaction: discord.Interaction, user: discord.Member, reason: s
     except Exception as e:
         await interaction.response.send_message(f"❌ Błąd podczas wyrzucania: {e}", ephemeral=True)
 
+@bot.tree.command(name="clearwarnsall", description="Usuwa wszystkie ostrzeżenia wszystkim użytkownikom")
+async def clear_warns_all(interaction: discord.Interaction):
+    # Sprawdź uprawnienia (np. do warnów lub dodaj osobne)
+    if not has_permission(interaction, "warn"):
+        await interaction.response.send_message("❌ Nie masz uprawnień do tej komendy.", ephemeral=True)
+        return
+
+    cursor.execute('DELETE FROM warnings')
+    conn.commit()
+
+    await interaction.response.send_message("✅ Wszystkie ostrzeżenia zostały usunięte.", ephemeral=True)
+
 
 # --- Uruchomienie bota i Flask ---
 if __name__ == "__main__":
