@@ -151,7 +151,6 @@ async def safe_send(destination, content=None, embed=None, delay=1):
         if e.status == 429:
             print("429 Rate limit, czekam...")
             await asyncio.sleep(5)
-            # możesz tu spróbować retry, ale uważaj żeby nie zapętlić
         else:
             print(f"Błąd wysyłania wiadomości: {e}")
     except Exception as e:
@@ -195,7 +194,6 @@ async def unmute_checker():
                 member = guild.get_member(user_id)
                 if member:
                     try:
-                        # Usuń rolę muta i przywróć stare role
                         muted_role = guild.get_role(MUTED_ROLE_ID)
                         if muted_role in member.roles:
                             await member.remove_roles(muted_role, reason="Koniec muta")
@@ -205,219 +203,214 @@ async def unmute_checker():
                         db.delete_roles(user_id)
                         log_channel = guild.get_channel(LOG_CHANNEL_ID)
                         if log_channel:
-                            await safe_send(log_channel, f"Użytkownik <@{user_id}> został automatycznie odmutowany po wygaśnięciu muta.")
-                    except discord.HTTPException as e:
-                        if e.status == 429:
-                            print("Rate limit przy odmutowywaniu, czekam...")
-                            await asyncio.sleep(5)
-                        else:
-                            print(f"Błąd HTTP: {e}")
+                            await safe_send(log_channel, f"Użytkownik <@{user_id}> został automatycznie odmutowany.")
                     except Exception as e:
                         print(f"❌ Błąd podczas odmutowywania użytkownika {user_id}: {e}")
 
-# === Komendy ===
-
-# Sprawdzanie uprawnień w app_commands
+# === Check perm decorator ===
 def check_perm(command_name):
-    async def predicate(interaction: discord.Interaction) -> bool:
+    def predicate(interaction: discord.Interaction):
         if has_permission(interaction, command_name):
             return True
-        await interaction.response.send_message("Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
-        return False
+        else:
+            raise app_commands.CheckFailure(f"Brak uprawnień do komendy {command_name}")
     return app_commands.check(predicate)
+
+# === Komendy ===
 
 @bot.event
 async def on_ready():
-    print(f'Zalogowano jako {bot.user} ({bot.user.id})')
+    print(f"Bot zalogowany jako {bot.user}!")
     temp_ban_checker.start()
     unmute_checker.start()
+    try:
+        synced = await bot.tree.sync()
+        print(f"Zsynchronizowano {len(synced)} komend slash.")
+    except Exception as e:
+        print(f"Błąd synchronizacji komend: {e}")
 
-# Komenda /mute
-@bot.tree.command(name="mute", description="Mute użytkownika na określony czas w minutach.")
+# -- warn --
+@bot.tree.command(name="warn", description="Ostrzeż użytkownika.")
+@check_perm("warn")
+@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if user == interaction.user:
+        await interaction.response.send_message("Nie możesz się ostrzec sam.", ephemeral=True)
+        return
+    db.add_warning(user.id, interaction.user.id, reason)
+    count = db.count_warnings(user.id)
+    await interaction.response.send_message(f"Użytkownik {user.mention} został ostrzeżony. Liczba warnów: {count}. Powód: {reason}")
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await safe_send(log_channel, f"**WARN:** {user.mention} otrzymał warn od {interaction.user.mention}. Powód: {reason}. Razem warnów: {count}")
+
+    # Automatyczne bany
+    if count == 5:
+        try:
+            await interaction.guild.ban(user, reason="Automatyczny ban za 5 warnów", delete_message_days=0)
+            unban_time = datetime.utcnow() + timedelta(days=3)
+            db.add_temp_ban(user.id, unban_time)
+            if log_channel:
+                await safe_send(log_channel, f"Użytkownik {user.mention} został zbanowany na 3 dni (5 warnów).")
+        except Exception as e:
+            await interaction.followup.send(f"Nie udało się zbanować użytkownika: {e}", ephemeral=True)
+    elif count == 10:
+        try:
+            await interaction.guild.ban(user, reason="Automatyczny ban za 10 warnów", delete_message_days=0)
+            unban_time = datetime.utcnow() + timedelta(days=7)
+            db.add_temp_ban(user.id, unban_time)
+            if log_channel:
+                await safe_send(log_channel, f"Użytkownik {user.mention} został zbanowany na 7 dni (10 warnów).")
+        except Exception as e:
+            await interaction.followup.send(f"Nie udało się zbanować użytkownika: {e}", ephemeral=True)
+    elif count >= 20:
+        try:
+            await interaction.guild.ban(user, reason="Automatyczny ban permanentny za 20 warnów", delete_message_days=0)
+            db.remove_temp_ban(user.id)  # już ban permanentny
+            if log_channel:
+                await safe_send(log_channel, f"Użytkownik {user.mention} został zbanowany na stałe (20+ warnów).")
+        except Exception as e:
+            await interaction.followup.send(f"Nie udało się zbanować użytkownika: {e}", ephemeral=True)
+
+# -- warns --
+@bot.tree.command(name="warns", description="Wyświetl wszystkie warny użytkownika.")
+@check_perm("warn")
+@app_commands.describe(user="Użytkownik do sprawdzenia")
+async def warns(interaction: discord.Interaction, user: discord.Member):
+    db.cursor.execute('SELECT moderator_id, reason, timestamp FROM warnings WHERE user_id = ? ORDER BY timestamp DESC', (user.id,))
+    warns = db.cursor.fetchall()
+    if not warns:
+        await interaction.response.send_message(f"{user.mention} nie ma żadnych warnów.", ephemeral=True)
+        return
+    embed = discord.Embed(title=f"Warny użytkownika {user}", color=discord.Color.orange())
+    for i, (mod_id, reason, timestamp) in enumerate(warns, 1):
+        mod = interaction.guild.get_member(mod_id)
+        mod_name = mod.display_name if mod else f"ID {mod_id}"
+        embed.add_field(name=f"{i}. Ostrzeżenie", value=f"Moderator: {mod_name}\nPowód: {reason}\nData: {timestamp}", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+# -- mute --
+@bot.tree.command(name="mute", description="Wycisz użytkownika na określony czas.")
 @check_perm("mute")
-@app_commands.describe(user="Użytkownik do mutowania", time="Czas muta w minutach")
-async def mute(interaction: discord.Interaction, user: discord.Member, time: int):
-    if user.id == interaction.user.id:
-        await interaction.response.send_message("Nie możesz zmutować siebie.", ephemeral=True)
+@app_commands.describe(user="Użytkownik do wyciszenia", czas="Czas w minutach", reason="Powód wyciszenia")
+async def mute(interaction: discord.Interaction, user: discord.Member, czas: int, reason: str):
+    if user == interaction.user:
+        await interaction.response.send_message("Nie możesz się wyciszyć sam.", ephemeral=True)
         return
-    if time <= 0:
-        await interaction.response.send_message("Czas muta musi być większy niż 0.", ephemeral=True)
+    if MUTED_ROLE_ID in [role.id for role in user.roles]:
+        await interaction.response.send_message("Użytkownik jest już wyciszony.", ephemeral=True)
         return
-
     muted_role = interaction.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
-        await interaction.response.send_message("Rola muta nie istnieje na serwerze.", ephemeral=True)
+        await interaction.response.send_message("Rola Muted nie istnieje na serwerze.", ephemeral=True)
         return
 
-    if muted_role in user.roles:
-        await interaction.response.send_message("Użytkownik jest już zmutowany.", ephemeral=True)
-        return
+    # Zapisz obecne role użytkownika (bez @everyone i muted)
+    roles_to_save = [r for r in user.roles if r.id != interaction.guild.id and r.id != MUTED_ROLE_ID]
+    db.save_roles(user.id, roles_to_save, datetime.utcnow() + timedelta(minutes=czas))
 
-    # Zapisz aktualne role użytkownika (bez roli @everyone i roli muta)
-    roles_to_save = [role for role in user.roles if role != interaction.guild.default_role and role != muted_role]
-
-    unmute_time = datetime.utcnow() + timedelta(minutes=time)
-
+    # Usuń wszystkie inne role i dodaj muted
     try:
-        # Zapisz role i czas odmutowania do bazy
-        db.save_roles(user.id, roles_to_save, unmute_time)
-        # Usuń stare role (poza @everyone)
-        await user.remove_roles(*roles_to_save, reason="Mute - usunięcie ról")
-        # Dodaj rolę muta
-        await user.add_roles(muted_role, reason="Mute")
-        await interaction.response.send_message(f"Użytkownik {user.mention} został zmutowany na {time} minut.")
+        await user.remove_roles(*roles_to_save, reason=f"Mute na {czas} minut: {reason}")
+        await user.add_roles(muted_role, reason=f"Muted na {czas} minut: {reason}")
+        await interaction.response.send_message(f"Użytkownik {user.mention} został wyciszony na {czas} minut. Powód: {reason}")
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await safe_send(log_channel, f"Użytkownik {user} został zmutowany na {time} minut przez {interaction.user}.")
-    except discord.Forbidden:
-        await interaction.response.send_message("Bot nie ma uprawnień do zmiany ról tego użytkownika.", ephemeral=True)
+            await safe_send(log_channel, f"**MUTE:** {user.mention} wyciszony przez {interaction.user.mention} na {czas} minut. Powód: {reason}")
     except Exception as e:
-        await interaction.response.send_message(f"Wystąpił błąd: {e}", ephemeral=True)
+        await interaction.response.send_message(f"Nie udało się wyciszyć użytkownika: {e}", ephemeral=True)
 
-# Komenda /unmute
-@bot.tree.command(name="unmute", description="Odmutuj użytkownika.")
+# -- unmute --
+@bot.tree.command(name="unmute", description="Odwołaj wyciszenie użytkownika.")
 @check_perm("mute")
 @app_commands.describe(user="Użytkownik do odmutowania")
 async def unmute(interaction: discord.Interaction, user: discord.Member):
     muted_role = interaction.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
-        await interaction.response.send_message("Rola muta nie istnieje.", ephemeral=True)
+        await interaction.response.send_message("Rola Muted nie istnieje na serwerze.", ephemeral=True)
         return
     if muted_role not in user.roles:
-        await interaction.response.send_message("Użytkownik nie jest zmutowany.", ephemeral=True)
+        await interaction.response.send_message("Użytkownik nie jest wyciszony.", ephemeral=True)
         return
 
-    saved_roles, _ = db.load_roles(user.id)
     try:
-        await user.remove_roles(muted_role, reason="Manualne odmutowanie")
-        roles_to_add = [interaction.guild.get_role(rid) for rid in saved_roles if interaction.guild.get_role(rid) is not None]
-        await user.add_roles(*roles_to_add, reason="Manualne odmutowanie - przywracanie ról")
+        await user.remove_roles(muted_role, reason=f"Odmutowanie przez {interaction.user}")
+        saved_roles, _ = db.load_roles(user.id)
+        roles_to_add = [interaction.guild.get_role(rid) for rid in saved_roles if interaction.guild.get_role(rid)]
+        await user.add_roles(*roles_to_add, reason=f"Przywrócenie ról po odmutowaniu")
         db.delete_roles(user.id)
         await interaction.response.send_message(f"Użytkownik {user.mention} został odmutowany.")
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await safe_send(log_channel, f"Użytkownik {user} został odmutowany przez {interaction.user}.")
-    except discord.Forbidden:
-        await interaction.response.send_message("Bot nie ma uprawnień do zmiany ról tego użytkownika.", ephemeral=True)
+            await safe_send(log_channel, f"**UNMUTE:** {user.mention} odmutowany przez {interaction.user.mention}.")
     except Exception as e:
-        await interaction.response.send_message(f"Wystąpił błąd: {e}", ephemeral=True)
+        await interaction.response.send_message(f"Błąd podczas odmutowywania: {e}", ephemeral=True)
 
-# Komenda /warn
-@bot.tree.command(name="warn", description="Ostrzeż użytkownika.")
-@check_perm("warn")
-@app_commands.describe(user="Użytkownik do ostrzeżenia", reason="Powód ostrzeżenia")
-async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
-    db.add_warning(user.id, interaction.user.id, reason)
-    warns_count = db.count_warnings(user.id)
-
-    await interaction.response.send_message(f"Użytkownik {user.mention} został ostrzeżony.\nLiczba ostrzeżeń: {warns_count}")
-
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await safe_send(log_channel, f"Użytkownik {user} został ostrzeżony przez {interaction.user}. Powód: {reason}. Liczba ostrzeżeń: {warns_count}")
-
-    # Automatyczne bany
-    try:
-        if warns_count == 5:
-            await interaction.guild.ban(user, reason="5 warnów - ban 3 dni", delete_message_days=0)
-            unban_time = datetime.utcnow() + timedelta(days=3)
-            db.add_temp_ban(user.id, unban_time)
-            if log_channel:
-                await safe_send(log_channel, f"Użytkownik {user} został zbanowany na 3 dni (5 warnów).")
-        elif warns_count == 10:
-            await interaction.guild.ban(user, reason="10 warnów - ban 7 dni", delete_message_days=0)
-            unban_time = datetime.utcnow() + timedelta(days=7)
-            db.add_temp_ban(user.id, unban_time)
-            if log_channel:
-                await safe_send(log_channel, f"Użytkownik {user} został zbanowany na 7 dni (10 warnów).")
-        elif warns_count >= 20:
-            await interaction.guild.ban(user, reason="20 warnów - ban permanentny", delete_message_days=0)
-            db.remove_temp_ban(user.id)
-            if log_channel:
-                await safe_send(log_channel, f"Użytkownik {user} został zbanowany permanentnie (20 warnów).")
-    except discord.Forbidden:
-        await interaction.followup.send("Nie mam uprawnień do banowania tego użytkownika.", ephemeral=True)
-    except Exception as e:
-        print(f"Błąd podczas automatycznego banowania: {e}")
-
-# Komenda /clearwarns
-@bot.tree.command(name="clearwarns", description="Usuń wszystkie ostrzeżenia użytkownika.")
-@check_perm("warn")
-@app_commands.describe(user="Użytkownik do wyczyszczenia ostrzeżeń")
-async def clearwarns(interaction: discord.Interaction, user: discord.Member):
-    db.clear_warnings(user.id)
-    await interaction.response.send_message(f"Ostrzeżenia użytkownika {user.mention} zostały wyczyszczone.")
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await safe_send(log_channel, f"Ostrzeżenia użytkownika {user} zostały wyczyszczone przez {interaction.user}.")
-
-# Komenda /warns
-@bot.tree.command(name="warns", description="Pokaż liczbę ostrzeżeń użytkownika.")
-@check_perm("warn")
-@app_commands.describe(user="Użytkownik do sprawdzenia")
-async def warns(interaction: discord.Interaction, user: discord.Member):
-    warns_count = db.count_warnings(user.id)
-    await interaction.response.send_message(f"Użytkownik {user.mention} ma {warns_count} ostrzeżeń.")
-
-# Komenda /kick
+# -- kick --
 @bot.tree.command(name="kick", description="Wyrzuć użytkownika z serwera.")
 @check_perm("kick")
-@app_commands.describe(user="Użytkownik do wyrzucenia", reason="Powód")
-async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "Brak powodu"):
-    try:
-        await user.kick(reason=reason)
-        await interaction.response.send_message(f"Użytkownik {user.mention} został wyrzucony.\nPowód: {reason}")
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            await safe_send(log_channel, f"Użytkownik {user} został wyrzucony przez {interaction.user}. Powód: {reason}")
-    except discord.Forbidden:
-        await interaction.response.send_message("Nie mam uprawnień do wyrzucania tego użytkownika.", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"Wystąpił błąd: {e}", ephemeral=True)
-
-# Komenda /ban
-@bot.tree.command(name="ban", description="Zbanuj użytkownika.")
-@check_perm("ban")
-@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód", days="Ilość dni usuniętych wiadomości (0-7)")
-async def ban(interaction: discord.Interaction, user: discord.Member, reason: str = "Brak powodu", days: int = 0):
-    if days < 0 or days > 7:
-        await interaction.response.send_message("Dni usuniętych wiadomości musi być w zakresie 0-7.", ephemeral=True)
+@app_commands.describe(user="Użytkownik do wyrzucenia", reason="Powód wyrzucenia")
+async def kick(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if user == interaction.user:
+        await interaction.response.send_message("Nie możesz wyrzucić samego siebie.", ephemeral=True)
         return
     try:
-        await interaction.guild.ban(user, reason=reason, delete_message_days=days)
-        await interaction.response.send_message(f"Użytkownik {user.mention} został zbanowany.\nPowód: {reason}")
+        await user.kick(reason=f"Wyrzucony przez {interaction.user}: {reason}")
+        await interaction.response.send_message(f"Użytkownik {user.mention} został wyrzucony z serwera. Powód: {reason}")
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await safe_send(log_channel, f"Użytkownik {user} został zbanowany przez {interaction.user}. Powód: {reason}")
-    except discord.Forbidden:
-        await interaction.response.send_message("Nie mam uprawnień do banowania tego użytkownika.", ephemeral=True)
+            await safe_send(log_channel, f"**KICK:** {user.mention} wyrzucony przez {interaction.user.mention}. Powód: {reason}")
     except Exception as e:
-        await interaction.response.send_message(f"Wystąpił błąd: {e}", ephemeral=True)
+        await interaction.response.send_message(f"Błąd podczas wyrzucania: {e}", ephemeral=True)
 
-# Komenda /unban
+# -- ban --
+@bot.tree.command(name="ban", description="Zbanuj użytkownika na stałe lub tymczasowo.")
+@check_perm("ban")
+@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód bana", czas="Czas bana w dniach (0 = permanentny)")
+async def ban(interaction: discord.Interaction, user: discord.Member, reason: str, czas: int = 0):
+    if user == interaction.user:
+        await interaction.response.send_message("Nie możesz zbanować samego siebie.", ephemeral=True)
+        return
+    try:
+        await interaction.guild.ban(user, reason=f"Ban od {interaction.user}: {reason}", delete_message_days=0)
+        if czas > 0:
+            unban_time = datetime.utcnow() + timedelta(days=czas)
+            db.add_temp_ban(user.id, unban_time)
+            msg = f"Użytkownik {user.mention} został zbanowany na {czas} dni. Powód: {reason}"
+        else:
+            db.remove_temp_ban(user.id)
+            msg = f"Użytkownik {user.mention} został zbanowany na stałe. Powód: {reason}"
+        await interaction.response.send_message(msg)
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await safe_send(log_channel, f"**BAN:** {user.mention} zbanowany przez {interaction.user.mention}. Powód: {reason}. Czas bana: {'permanentny' if czas == 0 else f'{czas} dni'}.")
+    except Exception as e:
+        await interaction.response.send_message(f"Błąd podczas banowania: {e}", ephemeral=True)
+
+# -- unban --
 @bot.tree.command(name="unban", description="Odbanuj użytkownika.")
 @check_perm("ban")
 @app_commands.describe(user_id="ID użytkownika do odbanowania")
 async def unban(interaction: discord.Interaction, user_id: int):
-    user_obj = discord.Object(id=user_id)
     try:
-        await interaction.guild.unban(user_obj)
-        await interaction.response.send_message(f"Użytkownik o ID {user_id} został odbanowany.")
+        user_obj = discord.Object(id=user_id)
+        await interaction.guild.unban(user_obj, reason=f"Odbanowanie przez {interaction.user}")
         db.remove_temp_ban(user_id)
+        await interaction.response.send_message(f"Użytkownik z ID {user_id} został odbanowany.")
         log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await safe_send(log_channel, f"Użytkownik o ID {user_id} został odbanowany przez {interaction.user}.")
+            await safe_send(log_channel, f"Użytkownik z ID {user_id} został odbanowany przez {interaction.user}.")
     except discord.NotFound:
-        await interaction.response.send_message("Ten użytkownik nie jest zbanowany.", ephemeral=True)
+        await interaction.response.send_message("Użytkownik nie jest zbanowany.", ephemeral=True)
     except discord.Forbidden:
-        await interaction.response.send_message("Nie mam uprawnień do odbanowywania.", ephemeral=True)
+        await interaction.response.send_message("Nie mam uprawnień do odbanowywania tego użytkownika.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Wystąpił błąd: {e}", ephemeral=True)
 
-# === Uruchomienie bota i flask w osobnym wątku ===
-def run_bot():
-    bot.run(os.getenv("TOKEN"))
+# === Uruchomienie Flaska w osobnym wątku ===
+flask_thread = threading.Thread(target=run_flask)
+flask_thread.start()
 
-if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    threading.Thread(target=run_bot).start()
+# === Uruchomienie bota ===
+TOKEN = os.getenv("TOKEN")  # Podstaw swój token do zmiennej środowiskowej DISCORD_TOKEN
+bot.run(TOKEN)
