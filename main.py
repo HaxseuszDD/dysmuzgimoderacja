@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 import os
 import sqlite3
 import json
-import threading
 from flask import Flask
+import threading
 
 # === Flask app ===
 app = Flask(__name__)
@@ -20,33 +20,31 @@ def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
 
-# === Discord Bot ===
-def get_token():
-    return os.getenv("DISCORD_TOKEN")
-
+# === Discord Bot Setup ===
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Stałe (ID)
+# === Stałe (ID roli i kanału logów) ===
 MUTED_ROLE_ID = 1396541521003675718
 LOG_CHANNEL_ID = 1396875096882417836
 
+# Role uprawnień do komend
 PERMISSIONS = {
     "warn": [1393370941811064972, 1393370832071426230, 1393370749661614080,
-              1393370358408544328, 1393370252519145493, 1393370458740490351,
-              1393370125083607174, 1393369936537194619, 1396460188298641418,
-              1393368165567692911],
+             1393370358408544328, 1393370252519145493, 1393370458740490351,
+             1393370125083607174, 1393369936537194619, 1396460188298641418,
+             1393368165567692911],
     "mute": [1393370749661614080, 1393370358408544328, 1393370252519145493,
-              1393370458740490351, 1393370125083607174, 1393369936537194619,
-              1396460188298641418, 1393368165567692911],
+             1393370458740490351, 1393370125083607174, 1393369936537194619,
+             1396460188298641418, 1393368165567692911],
     "kick": [1393370358408544328, 1393370252519145493, 1393370458740490351,
-              1393370125083607174, 1393369936537194619, 1396460188298641418,
-              1393368165567692911],
-    "ban":  [1393370458740490351, 1393370125083607174, 1393369936537194619,
-              1396460188298641418, 1393368165567692911]
+             1393370125083607174, 1393369936537194619, 1396460188298641418,
+             1393368165567692911],
+    "ban": [1393370458740490351, 1393370125083607174, 1393369936537194619,
+            1396460188298641418, 1393368165567692911]
 }
 
 def has_permission(interaction: discord.Interaction, command: str) -> bool:
@@ -54,7 +52,7 @@ def has_permission(interaction: discord.Interaction, command: str) -> bool:
     user_roles_ids = [role.id for role in interaction.user.roles]
     return any(role_id in user_roles_ids for role_id in allowed_roles)
 
-# Zarządzanie bazą SQLite w formie klasowej (lepsze zarządzanie połączeniem)
+# === Baza SQLite ===
 class Database:
     def __init__(self, path="roles.db"):
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -122,7 +120,7 @@ class Database:
 
 db = Database()
 
-# Task do odbanowywania użytkowników po czasie
+# === Task do automatycznego odbanowywania ===
 @tasks.loop(minutes=1)
 async def temp_ban_checker():
     await bot.wait_until_ready()
@@ -131,6 +129,7 @@ async def temp_ban_checker():
         if datetime.utcnow() >= unban_time:
             for guild in bot.guilds:
                 try:
+                    # Używamy fetch_ban, jeśli user jest zbanowany
                     ban_entry = await guild.fetch_ban(discord.Object(id=user_id))
                     if ban_entry:
                         await guild.unban(discord.Object(id=user_id), reason="Koniec tymczasowego bana")
@@ -139,11 +138,12 @@ async def temp_ban_checker():
                         if log_channel:
                             await log_channel.send(f"Użytkownik <@{user_id}> został automatycznie odbanowany po wygaśnięciu bana.")
                 except discord.NotFound:
-                    # Użytkownik nie jest zbanowany w tym guildzie
+                    # Nie znaleziono bana u użytkownika — usuwamy wpis w bazie
                     db.remove_temp_ban(user_id)
                 except Exception as e:
-                    print(f"❌ Błąd podczas automatycznego odbanowywania użytkownika {user_id}: {e}")
+                    print(f"❌ Błąd podczas odbanowywania użytkownika {user_id}: {e}")
 
+# === Eventy bota ===
 @bot.event
 async def on_ready():
     print(f"✅ Zalogowano jako {bot.user}")
@@ -151,7 +151,7 @@ async def on_ready():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="mlody sigma wbij na dysmuzgi muzgu xd"))
     temp_ban_checker.start()
 
-# Funkcje banowania
+# === Pomocnicze funkcje banowania ===
 async def apply_temp_ban(guild: discord.Guild, user: discord.Member, moderator: discord.Member, days: int, reason: str):
     try:
         await user.send(embed=discord.Embed(title="⛔ Tymczasowy ban", color=discord.Color.dark_red())
@@ -165,7 +165,7 @@ async def apply_temp_ban(guild: discord.Guild, user: discord.Member, moderator: 
     db.add_temp_ban(user.id, unban_time)
     log_channel = guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"Użytkownik {user} został tymczasowo zbanowany na {days} dni za {reason}.")
+        await log_channel.send(f"Użytkownik {user} został tymczasowo zbanowany na {days} dni za: {reason}.")
 
 async def apply_perm_ban(guild: discord.Guild, user: discord.Member, moderator: discord.Member, reason: str):
     try:
@@ -177,9 +177,8 @@ async def apply_perm_ban(guild: discord.Guild, user: discord.Member, moderator: 
     await user.ban(reason=reason)
     log_channel = guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"Użytkownik {user} został permanentnie zbanowany za {reason}.")
+        await log_channel.send(f"Użytkownik {user} został permanentnie zbanowany za: {reason}.")
 
-# Automatyczne banowanie na podstawie ostrzeżeń
 async def check_and_apply_ban(guild: discord.Guild, user: discord.Member, warn_count: int, moderator: discord.Member):
     try:
         if warn_count == 5:
@@ -194,7 +193,7 @@ async def check_and_apply_ban(guild: discord.Guild, user: discord.Member, warn_c
     except Exception as e:
         print(f"❌ Błąd przy automatycznym banowaniu: {e}")
 
-# Komendy
+# === Komendy ===
 
 @bot.tree.command(name="mute", description="Wycisz użytkownika na określony czas (w minutach)")
 @app_commands.describe(user="Użytkownik do wyciszenia", reason="Powód", time="Czas trwania w minutach")
@@ -209,12 +208,12 @@ async def mute(interaction: discord.Interaction, user: discord.Member, reason: s
         return
 
     # Zapisz obecne role użytkownika (oprócz @everyone i roli Muted)
-    previous_roles = [role for role in user.roles if role.id != interaction.guild.default_role.id and role != muted_role]
+    previous_roles = [role for role in user.roles if role != muted_role and role != interaction.guild.default_role]
 
     db.save_roles(user.id, previous_roles)
 
     try:
-        # Zamień role użytkownika na tylko muted_role
+        # Usuń wszystkie role i daj tylko Muted
         await user.edit(roles=[muted_role], reason=reason)
     except Exception as e:
         await interaction.response.send_message(f"❌ Nie udało się wyciszyć użytkownika: {e}", ephemeral=True)
@@ -260,7 +259,7 @@ async def kick(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.response.send_message(f"❌ Nie udało się wyrzucić użytkownika: {e}", ephemeral=True)
 
 @bot.tree.command(name="ban", description="Zbanuj użytkownika z serwera")
-@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód", time="Czas trwania bana w dniach (opcjonalne, jeśli puste - ban permanentny)")
+@app_commands.describe(user="Użytkownik do zbanowania", reason="Powód", time="Czas trwania bana w dniach (opcjonalne)")
 async def ban(interaction: discord.Interaction, user: discord.Member, reason: str, time: int = None):
     if not has_permission(interaction, "ban"):
         await interaction.response.send_message("❌ Nie masz uprawnień do użycia tej komendy.", ephemeral=True)
@@ -273,8 +272,15 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
         await apply_perm_ban(interaction.guild, user, interaction.user, reason=reason)
         await interaction.response.send_message(f"✅ Użytkownik {user.mention} został permanentnie zbanowany. Powód: {reason}")
 
-token = os.getenv("DISCORD_TOKEN")
-if not token:
-    print("❌ Brak tokena w zmiennych środowiskowych!")
-else:
-    bot.run(token)
+# === Uruchamianie Flask + Discord ===
+if __name__ == "__main__":
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        print("❌ Brak tokena w zmiennych środowiskowych!")
+    else:
+        # Start Flask w osobnym wątku
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.start()
+
+        # Start bota
+        bot.run(token)
