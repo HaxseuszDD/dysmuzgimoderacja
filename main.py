@@ -416,7 +416,7 @@ async def unban(interaction: discord.Interaction, user_id: int):
 
 # === Uruchomienie bota i flask w osobnym wątku ===
 def run_bot():
-    bot.run(os.getenv("DISCORD_TOKEN"))
+    bot.run(os.getenv("TOKEN"))
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
