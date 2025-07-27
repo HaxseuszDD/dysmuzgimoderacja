@@ -273,11 +273,8 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
         await apply_perm_ban(interaction.guild, user, interaction.user, reason=reason)
         await interaction.response.send_message(f"✅ Użytkownik {user.mention} został permanentnie zbanowany. Powód: {reason}")
 
-if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    token = get_token()
-    if not token:
-        print("❌ Brak tokena w zmiennych środowiskowych!")
-    else:
-        print("✅ Token znaleziony, uruchamiam bota...")
-        bot.run(token)
+token = os.getenv("DISCORD_TOKEN")
+if not token:
+    print("❌ Brak tokena w zmiennych środowiskowych!")
+else:
+    bot.run(token)
