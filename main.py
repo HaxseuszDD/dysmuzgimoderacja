@@ -389,4 +389,5 @@ if __name__ == "__main__":
     if not token:
         print("❌ Brak tokena w zmiennych środowiskowych!")
     else:
-        bot.run(token)
+        print("✅ Token znaleziony, uruchamiam bota...")
+        client.run(token)
